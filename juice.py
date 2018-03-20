@@ -148,6 +148,8 @@ Configure the resources, requires both g5k and inventory executions
         "registry": env["config"]["registry"],
         "db": db,
         "locality": locality,
+        # Set monitoring to True by default
+        "enable-monitoring": env['config'].get('enable-monitoring', True)
     }
     env["db"] = db
     # use deploy of each role
