@@ -110,10 +110,24 @@ Claim resources on Grid'5000 (from a frontend)
     """
     provider = G5k(config["g5k"])
     roles, networks = provider.init(force_deploy=force)
+
+    if len(networks) == 1:
+        # Workaround for single NIC's cluster. We put all the traffic
+        # on the same NIC
+        logging.warning("Only One Nic. Put all the traffic under %s" % networks[0])
+        for rscs in roles.values():
+            for r in rscs:
+                r.extra = {
+                    'control_network': networks[0],
+                    'database_network': networks[0],
+                    'enos_devices': networks
+                }
+
     env["config"] = config
     env["roles"] = roles
     env["networks"] = networks
     env["tasks_ran"] = ['g5k']
+
 
 
 @doc()
