@@ -8,15 +8,15 @@ import juice as j
 from execo_engine.sweep import (ParamSweeper, sweep)
 
 
-# WALLTIME = '13:58:00'
-WALLTIME = '01:40:00'
-# RESERVATION = '2018-03-19 19:00:01'
-RESERVATION = None
+WALLTIME = '04:58:00'
+# WALLTIME = '01:40:00'
+RESERVATION = '2018-03-21 04:01:01'
+# RESERVATION = None
 
 # DATABASES = ['mariadb', 'cockroachdb']
 DATABASES = ['mariadb']
-# CLUSTER_SIZES = [3, 25, 50]
-CLUSTER_SIZES = [2]
+CLUSTER_SIZES = [3, 25, 45]
+# CLUSTER_SIZES = [2]
 DELAYS = [0, 50, 150]
 # DELAYS = [0]
 
