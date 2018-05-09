@@ -1,0 +1,1017 @@
+# -*- org-confirm-babel-evaluate: nil; -*-
+#+TITLE: Juice Notebook
+#+AUTHOR: Marie Delavergne, Ronan-Alexandre Cherrueau
+#+EMAIL: {firstname.lastname}@inria.fr
+#+DATE: <2018>
+
+#+LANGUAGE: en
+#+OPTIONS: email:t
+#+OPTIONS: ^:{}
+
+#+PROPERTY: header-args:python  :session default
+#+PROPERTY: header-args:python+ :cache no
+#+PROPERTY: header-args:python+ :var SNS_CONTEXT="notebook"
+# #+PROPERTY: header-args:python+ :exports both  # export contains code + result see [[info:org#Exporting%20code%20blocks][info:org#Exporting code blocks]]
+# #+PROPERTY: header-args:python+ :results output
+
+#+HTML_HEAD: <link rel="stylesheet" type="text/css" href="timeline.css"/>
+#+HTML_HEAD: <link rel="stylesheet" type="text/css" href="https://cdn.datatables.net/1.10.16/css/jquery.dataTables.css">
+#+HTML_HEAD: <script src="https://code.jquery.com/jquery-3.3.1.slim.min.js" integrity="sha256-3edrmyuQ0w65f8gfBsqowzjJe2iM6n0nKciPUp8y+7E=" crossorigin="anonymous"></script>
+#+HTML_HEAD: <script type="text/javascript" charset="utf8" src="https://cdn.datatables.net/1.10.16/js/jquery.dataTables.js"></script>
+
+#+BEGIN_EXPORT html
+<script type="text/javascript">
+$(document).ready( function () {
+  $('.table-striped').DataTable({
+    searching: false,
+    stateSave: false,
+    ordering: false,
+    autowidth: false
+  });
+
+  $('.dataTables_length').hide();
+});
+</script>
+#+END_EXPORT
+
+#+BEGIN_abstract
+The /Juice/ tool runs performance analyses of distributed SQL
+databases. In particular, Juice tests and evaluates the performances
+of such SQL databases in the context of a distributed OpenStack with
+high latency network. The following notebook presents performance
+tests results together with an analyze of these results for two
+distributed SQL databases: Galera and CockroachDB.
+#+END_abstract
+
+* TODO Introduction
+Definition of Discovery. What we try to do.
+
+Take bake hotedge paper and explain the bottom/up approach.
+
+- Expected size of the cluseter (10000)
+- WAN links
+- Split brain
+- Expected behaviors (read and write everywhere while maintaining ACID
+  prop).
+
+* TODO Considered Databases
+Description of databases, how they works, how they implements expected
+behaviors of the previous section
+
+** CockroachDB (/abbr./ CRDB).
+** Galera in multi-master replication mode.
+
+* TODO Considered OpenStack Services
+Keystone
+
+* Considered Rally Scenarios
+[[https://rally.readthedocs.io/en/latest/][Rally]] is a testing benchmarking tool for OpenStack. Juice uses Rally
+to evaluate how OpenStack control plane behaves at scale. This section
+describes Rally scenarios that are considered in this experiment. The
+description includes the ratio of reads and writes performed on the
+database. For a transactional (OLTP) database, depending of the
+reads/writes ratio, it could be better to choose one replication
+strategy to another (i.e., replicate records on all of your nodes or
+not).
+
+** keystone/authenticate-user-and-validate-token
+Description: authenticate and validate a keystone token.
+
+Definition Code:
+[[https://github.com/openstack/rally-openstack/blob/6158c1139c0a4d88cab74481c5cbfc8be398f481/samples/tasks/scenarios/keystone/authenticate-user-and-validate-token.yaml][samples/tasks/scenarios/keystone/authenticate-user-and-validate-token]]
+
+Source Code:
+[[https://github.com/openstack/rally-openstack/blob/b1ae405b7fab355f3062cdb56a5b187fc6f2907f/rally_openstack/scenarios/keystone/basic.py#L111-L120][rally_openstack.scenarios.keystone.basic.AuthenticateUserAndValidateToken]]
+
+List of keystone functionalities:
+1. keystone_v3.fetch_token
+2. keystone_v3.validate_token
+
+%Reads/%Writes: 96.46/3.54
+
+Number of runs: 20
+
+** keystone/create-add-and-list-user-roles
+Description: create user role, add it and list user roles for given
+user.
+
+Definition Code:
+[[https://github.com/openstack/rally-openstack/blob/6158c1139c0a4d88cab74481c5cbfc8be398f481/samples/tasks/scenarios/keystone/create-add-and-list-user-roles.yaml][samples/tasks/scenarios/keystone/create-add-and-list-user-roles]]
+
+Source Code:
+[[https://github.com/openstack/rally-openstack/blob/b1ae405b7fab355f3062cdb56a5b187fc6f2907f/rally_openstack/scenarios/keystone/basic.py#L214-L228][rally_openstack.scenarios.keystone.basic.CreateAddAndListUserRoles]]
+
+List of keystone functionalities:
+1. keystone_v3.create_role
+2. keystone_v3.add_role
+3. keystone_v3.list_roles
+
+%Reads/%Writes: 96.22/3.78
+
+Number of runs: 100
+
+** keystone/create-and-list-tenants
+Description: create a keystone tenant with random name and list all
+tenants.
+
+Definition Code:
+[[https://github.com/openstack/rally-openstack/blob/6158c1139c0a4d88cab74481c5cbfc8be398f481/samples/tasks/scenarios/keystone/create-and-list-tenants.yaml][samples/tasks/scenarios/keystone/create-and-list-tenants]]
+
+Source Code:
+[[https://github.com/openstack/rally-openstack/blob/b1ae405b7fab355f3062cdb56a5b187fc6f2907f/rally_openstack/scenarios/keystone/basic.py#L166-L181][rally_openstack.scenarios.keystone.basic.CreateAndListTenants]]
+
+List of keystone functionalities:
+1. keystone_v3.create_project
+2. keystone_v3.list_projects
+
+%Reads/%Writes: 92.12/7.88
+
+Number of runs: 10
+
+** keystone/create-and-list-users
+Description: create a keystone user with random name and list all
+users.
+
+List of keystone functionalities:
+1. keystone_v3.create_user
+2. keystone_v3.list_users
+
+%Reads/%Writes: 92.05/7.95
+
+Definition Code:
+[[https://github.com/openstack/rally-openstack/blob/6158c1139c0a4d88cab74481c5cbfc8be398f481/samples/tasks/scenarios/keystone/create-add-and-list-user-roles.yaml][samples/tasks/scenarios/keystone/create-and-list-users]]
+
+Source Code:
+[[https://github.com/openstack/rally-openstack/blob/b1ae405b7fab355f3062cdb56a5b187fc6f2907f/rally_openstack/scenarios/keystone/basic.py#L145-L163][rally_openstack.scenarios.keystone.basic.CreateAndListUsers]].
+
+Number of runs: 100
+
+** keystone/create-user-set-enabled-and-delete
+Description: create a keystone user, enable or disable it, and delete
+it.
+
+List of keystone functionalities:
+1. keystone_v3.create_user
+2. keystone_v3.update_user
+3. keystone_v3.delete_user
+
+%Reads/%Writes: 91.07/8.93
+
+Definition Code:
+[[https://github.com/openstack/rally-openstack/blob/6158c1139c0a4d88cab74481c5cbfc8be398f481/samples/tasks/scenarios/keystone/create-user-set-enabled-and-delete.yaml][samples/tasks/scenarios/keystone/create-user-set-enabled-and-delete]]
+
+Source Code:
+[[https://github.com/openstack/rally-openstack/blob/b1ae405b7fab355f3062cdb56a5b187fc6f2907f/rally_openstack/scenarios/keystone/basic.py#L75-L91][rally_openstack.scenarios.keystone.basic.CreateUserSetEnabledAndDelete]]
+
+Number of runs: 100
+
+** keystone/create-user-update-password
+Description: create user and update password for that user.
+
+List of keystone functionalities:
+1. keystone_v3.create_user
+2. keystone_v3.update_user
+
+%Reads/%Writes: 89.79/10.21
+
+Definition Code:
+[[https://github.com/openstack/rally-openstack/blob/6158c1139c0a4d88cab74481c5cbfc8be398f481/samples/tasks/scenarios/keystone/create-user-update-password.yaml][samples/tasks/scenarios/keystone/create-user-update-password]]
+
+Source Code:
+[[https://github.com/openstack/rally-openstack/blob/b1ae405b7fab355f3062cdb56a5b187fc6f2907f/rally_openstack/scenarios/keystone/basic.py#L306-L320][rally_openstack.scenarios.keystone.basic.CreateUserUpdatePassword]]
+
+Number of runs: 100
+
+** keystone/get-entities
+Description: get instance of a tenant, user, role and service by id's.
+An ephemeral tenant, user, and role are each created. By default,
+fetches the 'keystone' service.
+
+List of keystone functionalities:
+1. keystone_v3.create_project
+2. keystone_v3.create_user
+3. keystone_v3.create_role
+   1) keystone_v3.list_roles
+   2) keystone_v3.add_role
+4. keystone_v3.get_project
+5. keystone_v3.get_user
+6. keystone_v3.get_role
+7. keystone_v3.list_services
+8. keystone_v3.get_services
+
+%Reads/%Writes: 91.9/8.1
+
+Definition Code:
+[[https://github.com/openstack/rally-openstack/blob/6158c1139c0a4d88cab74481c5cbfc8be398f481/samples/tasks/scenarios/keystone/get-entities.yaml][samples/tasks/scenarios/keystone/get-entities]]
+
+Source Code:
+[[https://github.com/openstack/rally-openstack/blob/b1ae405b7fab355f3062cdb56a5b187fc6f2907f/rally_openstack/scenarios/keystone/basic.py#L231-L261][rally_openstack.scenarios.keystone.basic.GetEntities]]
+
+Number of runs: 100
+
+** A note about gauging the %reads/%writes ratio
+The %reads/%writes ratio is computed on Mariadb. The gauging code
+reads values of status variables ~Com_xxx~ that provide statement
+counts over all connections (with ~xxx~ stands for ~SELECT~, ~DELETE~,
+~INSERT~, ~UPDATE~, ~REPLACE~ statements). The SQL query that does
+this job is available in listing [[lst:gauging-ratio-sql]] and returns the
+total number of reads and writes since the database started. That SQL
+query is called before and after the execution of one Rally scenario.
+After and before values are then subtracted to compute the number of
+reads and writes performed during the scenario and finally, compared
+to compute the ratio.
+
+#+CAPTION: Total number of reads and writes performed on
+#+CAPTION: MariaDB since the last reboot
+#+NAME: lst:gauging-ratio-sql
+#+BEGIN_SRC sql :eval no
+SELECT
+  SUM(IF(variable_name = 'Com_select', variable_value, 0))
+     AS `Total reads`,
+  SUM(IF(variable_name IN ('Com_delete',
+                           'Com_insert',
+                           'Com_update',
+                           'Com_replace'), variable_value, 0))
+     AS `Total writes`
+FROM  information_schema.GLOBAL_STATUS;
+#+END_SRC
+
+Note that %reads/%writes may be a little bit more in favor of reads
+than what it is presented here because the following also takes into
+account the creation/deletion of rally context. A basic Rally context
+for a Keystone scenario is ~{"admin_cleanup@openstack":
+["keystone"]}~. Not sure what does this context do exactly though,
+maybe it only creates an admin user... This context may be extended by
+other inserts specified in the scenario definition (under the
+~context~ key; see scenario definition for
+[[*keystone/create-add-and-list-user-roles][keystone/create-add-and-list-user-roles]]).
+
+The Juice implementation for this gauging is available on GitHub at
+[[https://github.com/rcherrueau/juice/blob/02af922a7c3221462d7106dfb2751b3be709a4d5/experiments/read-write-ratio.py][experiments/read-write-ratio.py]].
+
+* Prelude                                                          :noexport:
+#+BEGIN_SRC python :results silent
+# From standard lib
+from typing import (Dict, Union, Iterator,
+                    Callable, List, Tuple,
+                    TypeVar) # Type annoation
+import glob                    # Unix style pathname
+from operator import *
+import re
+import json
+
+# Other libs
+from dataclasses import dataclass   # Dataclass à la python 3.7
+import objectpath                   # XPath for json
+import pandas as pd                 # data series analyses
+import matplotlib.pyplot as plt     # ploting
+import seaborn as sns               # ^
+import functional                   # For my sanity
+from functional import seq          # ^
+from functional.util import compose # ^
+
+RDBMS = [ 'mariadb', 'cockroachdb' ]
+
+T = TypeVar('T')
+U = TypeVar('U')
+
+# -- Utils
+def df2orgtable(df: pd.DataFrame, index_name="") -> List[List[str]]:
+    """
+    Formats a 2d pandas DataFrame into in a org table.
+
+    The optional `index_name` let you label indices.
+    """
+    columns = df.axes[1].values.tolist() # columns names
+    indices = df.axes[0].values.tolist() # row labels
+    rows    = df.values.tolist()         # rows
+    # Put indeces in front of each row
+    for index, r in enumerate(rows):
+        r = list(map(lambda v: f'{v:.3f}', r))
+        r.insert(0, indices[index])
+        rows[index] = r
+    #
+    columns.insert(0, index_name)  # Id name in front of col names
+    rows.insert(0, None)         # put a hline
+    rows.insert(0, columns)      # put rows
+    return rows
+
+# should be `xps: List[XP]`, but xp is not defined at that point
+def xp2orgtable(xps: List[any]) -> List[List[str]]:
+    def xp2orgtablerow(xp) -> List[str]:
+        "Format an `XP` into a org table row."
+        latency = "LAN" if xp.latency == 0 else xp.latency * 2
+        scn = xp.scenario.replace('KeystoneBasic.', '')
+        fp = f'[[file:{xp.filepath}][...{xp.filepath[-11:]}]]'
+        return [xp.cluster_size, latency, scn, xp.success, fp]
+    # Make org table
+    table = [ xp2orgtablerow(xp) for xp in xps ]
+    table.insert(0, None) # Hline
+    table.insert(0, ["#Cluster", "RTT (ms)", "Keystone Scenario", "Success", "Filepath"])
+    return table
+
+def _and(filters: List[Callable[[T], bool]]) -> Callable[[T], bool]:
+    "Test a list of filter with AND"
+    def __and(value: T) -> bool:
+        for f in filters:
+            if not f(value): return False
+            #
+        return True
+    # Curry
+    return __and
+
+# Monkey patch PyFunctional with new combinator
+def on_value_t(f: Callable[[T], U]):
+    """Applies f on the second element of a (k, v).
+
+    >>> seq([("k1", 1), ("k2", 2)]).on_value(str)
+    [("k1", "1"), ("k2", "2")]
+    """
+    fname = functional.transformations.name(f)
+    return functional.transformations.Transformation(
+        f'on_key({fname})',
+        # lambda sequence: map(lambda kv: (kv[0], f(kv[1])), sequence),
+        lambda sequence: seq(sequence).map(lambda kv: (kv[0], f(kv[1]))),
+        None)
+
+def map_on_value_t(f: Callable[[List[T]], List[U]]):
+    """Maps f on the second element of a list of (k, [v]).
+
+    >>> seq([("k1", [1, 1, 1]), ("k2", [2, 2, 2])]).map_on_value(str)
+    [("k1", ["1", "1", "1"]), ("k2", ["2", "2", "2"])]
+    """
+    fname = functional.transformations.name(f)
+    return functional.transformations.Transformation(
+        f'map_on_value({fname})',
+        # lambda sequence: map(lambda kv: (kv[0], seq(kv[1]).map(f)), sequence),
+        lambda sequence: seq(sequence).map(lambda kv: (kv[0], seq(kv[1]).map(f))),
+        None)
+
+def push_t(e: T):
+    """Add the element `e` in the sequence.
+
+    >>> seq([1, 2]).pu(0)
+    [0, 1, 2]
+    """
+    def push(i: Iterator[any], e: any) -> Iterator[any]:
+        l = list(i)
+        l.insert(0, e)
+        return l
+    #
+    ename = functional.transformations.name(e)
+    return functional.transformations.Transformation(
+        f'push({ename})',
+        lambda sequence: push(sequence, e),
+        None)
+
+functional.pipeline.Sequence.on_value = lambda self, f: self._transform(on_value_t(f))
+functional.pipeline.Sequence.map_on_value = lambda self, f: self._transform(map_on_value_t(f))
+functional.pipeline.Sequence.push = lambda self, e: self._transform(push_t(e))
+functional.pipeline.Sequence.__len__ = lambda self: self.len()
+functional.pipeline.Sequence.head = lambda self: self.take(1).to_list().pop()
+
+# plot config
+sns.set_context(SNS_CONTEXT)
+sns.set_palette("muted")
+#+END_SRC
+
+* Extract and Reify Experiments with their Rally Results
+The execution of a Rally scenario (such as those seen in the previous
+section -- see [[*Considered Rally Scenarios][Considered Rally Scenarios]]) produces a json file. The
+json file contains a list of entries (path ~workloads.data~): one for
+each run of the scenario. An entry then retains the time (in second)
+it takes to complete all Keystone operations involved in the Rally
+scenario.
+
+This notebook evaluate different database backends in the context of
+an OpenStack for the edge on the basis of Rally benchmarking tool.
+This section provides python facilities to extract and query Rally
+results for latter analyses.
+
+An archive with results of all experiments of this notebook is
+available at TODO:url. Let's assume the ~XPS_PATH~ variable references
+the path where this archive is extracted. In this archive, there is
+results for experimentation on two databases engines: CRDB and Galera.
+Results are in several json files, so listing [[lst:xp-paths]] define
+accessors for all of them thanks to the [[https://docs.python.org/3/library/glob.html][~glob~]] python module. The
+~glob~ module finds all paths that match a specified UNIX patterns.
+
+#+CAPTION: Paths to Rally Json Results File.
+#+NAME: lst:xp-paths
+#+BEGIN_SRC python :results silent
+# XP_PATHS = './marie/'
+XP_PATHS = './grisou/'
+CRDB_XP_PATHS = glob.glob(XP_PATHS + 'cockroachdb-*/results/*.json')
+# CRDB_XP_PATHS = glob.glob('./ecotype/' + 'cockroachdb-*/results/*.json')
+GALERA_XP_PATHS = glob.glob(XP_PATHS + 'mariadb-*/results/*.json')
+#+END_SRC
+
+** From Json files to Python Objects
+A data class ~XP~ retains data of one experiment (i.e., name of the
+rally scenario, name of database technology, ... -- see l.
+[[(xp-dataclass-start)]] to [[(xp-dataclass-end)]] of listing [[lst:xp-dataclass]]
+for the complete list). Reifing experiment data in a Python object
+will help for the latter analyses. Whit a Python object, it is easier
+to filer, sort, map, ... experiments.
+
+#+CAPTION: Experiment Data Class.
+#+NAME: lst:xp-dataclass
+#+BEGIN_SRC python -r :results silent
+@dataclass(frozen=True)
+class XP:
+    scenario: str     # Rally scenario name (ref:xp-dataclass-start)
+    rdbms: str        # Name of the RDBMS (e,g, cockcroachdb, galera)
+    filepath: str     # Filepath of the json file
+    cluster_size: int # Size of the cluster
+    latency: int      # Latency between nodes
+    success: str      # Success rate (e.g., "100%")
+    dataframe: pd.DataFrame  # Results in a pandas 2d DataFrame (ref:xp-dataclass-end)
+#+END_SRC
+
+The ~XP~ data class comes with the ~make_xp~ function (see, lst.
+[[lst:make_xp]]). It produces an ~XP~ object from an experiment file path
+(i.e., Rally json file). Especially, it uses the python [[http://objectpath.org/][~objectpath~]]
+module that provides a DSL to query Json documents (à la XPath) and
+extract only interested data.
+
+#+CAPTION: Builds an ~XP~ object from a Rally Json Result File.
+#+NAME: lst:make_xp
+#+BEGIN_SRC python -r :results silent :noweb yes
+def make_xp(rally_path: str) -> XP:
+    # Find XP name in the `rally_path`
+    RE_XP = r'(?:mariadb|cockroachdb)-[a-zA-Z0-9\-]+'
+    # Find XP params in the `rally_path` (e.g., cluster size, latency, ...)
+    RE_XP_PARAMS = r'(?P<db>[a-z]+)-(?P<cluster_size>[0-9]+)-(?P<latency>[0-9]+).*'
+    # Json path to the rally scenario's name
+    JPATH_SCN = '$.tasks.subtasks[0].title[0]'
+    # Json path to the success rate
+    JPATH_SUCCESS = '$.tasks.subtasks[0].workloads[0].statistics.durations.total.data.success'
+    #
+    <<lst:dataframe_per_operations>> # (ref:dataframe_per_operations)
+    #
+    with open(rally_path) as rally_json:
+        rally_values = objectpath.Tree(json.load(rally_json))
+        xp_info = re.match(RE_XP_PARAMS, re.findall(RE_XP, rally_path)[0]).groupdict()
+        return XP(
+            scenario = rally_values.execute(JPATH_SCN),
+            filepath = rally_path,
+            rdbms = xp_info.get('db'),
+            cluster_size = int(xp_info.get('cluster_size')),
+            latency = int(xp_info.get('latency')),
+            success = next(rally_values.execute(JPATH_SUCCESS)),
+            dataframe = dataframe_per_operations(rally_values)
+        )
+#+END_SRC
+
+The [[(dataframe_per_operations)][~<<lst:dataframe_per_operations>>~]] is a placeholder for the
+function that transforms Rally Json results in a pandas [[https://pandas.pydata.org/pandas-docs/stable/generated/pandas.DataFrame.html#pandas.DataFrame][~DataFrame~]]
+for result analyses. The next section will say more on this. Right
+now, focus on ~make_xp~. With ~make_xp~, transforming all Rally Jsons
+into ~XP~ objects is as simple as mapping over all experiment paths
+(see lst. [[lst:xps]]).
+
+#+CAPTION: From Json Files to Python Objects.
+#+NAME: lst:xps
+#+BEGIN_SRC python :results silent
+XPS = seq(CRDB_XP_PATHS + GALERA_XP_PATHS).map(make_xp)
+#+END_SRC
+
+This notebook also comes with a bunch of predicate in its toolbelt
+(see, lst. [[lst:toolbelt]]). They will ease the filtering and sorting of
+experiments.
+
+#+CAPTION: Experiments ~XP~ Predicates.
+#+NAME: lst:toolbelt
+#+BEGIN_SRC python :results silent
+def is_crdb(xp: XP) -> bool:
+    "Filter for CRDB experiment."
+    return xp.rdbms == 'cockroachdb'
+
+def is_galera(xp: XP) -> bool:
+    "Filter for Galera experiment."
+    return xp.rdbms == 'mariadb'
+
+def is_keystone_scn(scn: str) -> bool:
+    "Filter for keystone scenario `scn`."
+    return lambda xp: xp.scenario == 'KeystoneBasic.' + scn
+
+def when_latency(lat: int) -> Callable[[XP], bool]:
+    "Filter for latence `lat`."
+    return lambda xp: xp.latency == lat
+
+def when_cluster_size(csize: int) -> Callable[[XP], bool]:
+    "Filter for cluster size `csize`."
+    return lambda xp: xp.cluster_size == csize
+
+def xp_csize_rtt_scn_order(xp: XP) -> str:
+    """
+    Returns a comparable value to sort experimentation.
+
+    The sort is made on
+    1. The database type (CRDB or Galera)
+    2. Size of the cluster
+    3. Latency
+    4. Rally scenario's name
+    """
+    # Format String Syntax
+    # https://docs.python.org/2/library/string.html#format-examples
+    return f'{xp.rdbms}-{xp.cluster_size:0>3}-{xp.latency:0>3}-{xp.scenario}'
+#+END_SRC
+
+*** CockroachDB experiments
+Listing [[lst:crdb_xps]] shows how to compute the list of experiments for
+CockroachDB (~filter(is_crdb)~), sorted by the size of the cluster and
+the Round Trip Time between nodes
+(~order_by(xp_csize_rtt_scn_order)~). Table [[tab:crdb_xps]] presents the
+results.
+
+#+CAPTION: Access to CockroachDB Experiments.
+#+NAME: lst:crdb_xps
+#+BEGIN_SRC python :results silent
+CRDB_XPS = XPS.filter(is_crdb).order_by(xp_csize_rtt_scn_order)
+#+END_SRC
+
+#+BEGIN_COMMENT
+The ~xp2orgtable~ is a [[*Prelude][Prelude]] function that takes a list of ~XP~ and
+formats them into an Org table as table [[tab:crdb_xps]].
+#+END_COMMENT
+
+#+HEADER: :colnames yes :hlines yes
+#+NAME: lst:crdb_xps_org
+#+BEGIN_SRC python :results table :exports results
+xp2orgtable(CRDB_XPS)
+#+END_SRC
+
+#+CAPTION: CockroachDB Experiments.
+#+NAME: tab:crdb_xps
+#+ATTR_HTML: :class table-striped
+#+RESULTS: lst:crdb_xps_org
+| #Cluster | RTT (ms) | Keystone Scenario                    | Success | Filepath       |
+|----------+----------+--------------------------------------+---------+----------------|
+|        3 |      LAN | authenticate_user_and_validate_token |  100.0% | [[file:./grisou/cockroachdb-3-0/results/report-d0455e03-8714-4c2e-9569-dab5e1225b2e.json][...225b2e.json]] |
+|        3 |      LAN | create_add_and_list_user_roles       |   96.0% | [[file:./grisou/cockroachdb-3-0/results/report-357fd7fb-8e01-4ce7-88c8-78969d4f39e7.json][...4f39e7.json]] |
+|        3 |      LAN | create_and_list_tenants              |  100.0% | [[file:./grisou/cockroachdb-3-0/results/report-5eb23acd-c309-4236-bb46-083ae572625b.json][...72625b.json]] |
+|        3 |      LAN | create_and_list_users                |   95.0% | [[file:./grisou/cockroachdb-3-0/results/report-488b51c9-479c-457d-9af0-35d5ccec3ca5.json][...ec3ca5.json]] |
+|        3 |      LAN | create_and_update_user               |  100.0% | [[file:./grisou/cockroachdb-3-0/results/report-fb2eb9a3-ee05-4587-89e0-03d930f2c73a.json][...f2c73a.json]] |
+|        3 |      LAN | create_user_set_enabled_and_delete   |   99.0% | [[file:./grisou/cockroachdb-3-0/results/report-cfd4c225-ecf4-4a61-ab07-2d241b15d8ee.json][...15d8ee.json]] |
+|        3 |      LAN | create_user_update_password          |   99.0% | [[file:./grisou/cockroachdb-3-0/results/report-b5329c76-0332-4b20-be91-997713cee4c7.json][...cee4c7.json]] |
+|        3 |      LAN | get_entities                         |   98.0% | [[file:./grisou/cockroachdb-3-0/results/report-b201a310-1ed8-4c18-831d-f47b2dc0b820.json][...c0b820.json]] |
+|        3 |      100 | authenticate_user_and_validate_token |  100.0% | [[file:./grisou/cockroachdb-3-50/results/report-32b7ff81-6dcb-466d-92cc-55590e6dc440.json][...6dc440.json]] |
+|        3 |      100 | create_add_and_list_user_roles       |  100.0% | [[file:./grisou/cockroachdb-3-50/results/report-b50b1fb2-318e-43f0-8d86-66318fd1503d.json][...d1503d.json]] |
+|        3 |      100 | create_and_list_tenants              |  100.0% | [[file:./grisou/cockroachdb-3-50/results/report-4dfec354-9ea3-43a3-b244-d62d4d84e1aa.json][...84e1aa.json]] |
+|        3 |      100 | create_and_list_users                |   94.0% | [[file:./grisou/cockroachdb-3-50/results/report-01127b66-7174-4dd8-8fdb-4629de561368.json][...561368.json]] |
+|        3 |      100 | create_and_update_user               |  100.0% | [[file:./grisou/cockroachdb-3-50/results/report-e4cf981e-33d0-400b-b114-29c60bb44337.json][...b44337.json]] |
+|        3 |      100 | create_user_set_enabled_and_delete   |   99.0% | [[file:./grisou/cockroachdb-3-50/results/report-bffaa669-174d-4665-850c-989747e475aa.json][...e475aa.json]] |
+|        3 |      100 | create_user_update_password          |  100.0% | [[file:./grisou/cockroachdb-3-50/results/report-dffcae4e-8f1f-4116-9d40-c2e82cf38943.json][...f38943.json]] |
+|        3 |      100 | get_entities                         |  100.0% | [[file:./grisou/cockroachdb-3-50/results/report-019a25b5-7be0-4e4c-9a34-f7289d64f3c5.json][...64f3c5.json]] |
+|        3 |      300 | authenticate_user_and_validate_token |  100.0% | [[file:./grisou/cockroachdb-3-150/results/report-d1917e84-6dc9-4929-a5b9-006fc615de60.json][...15de60.json]] |
+|        3 |      300 | create_add_and_list_user_roles       |   96.0% | [[file:./grisou/cockroachdb-3-150/results/report-5dc24a65-edb1-4349-92f0-b8db39be8536.json][...be8536.json]] |
+|        3 |      300 | create_and_list_tenants              |  100.0% | [[file:./grisou/cockroachdb-3-150/results/report-39f82b21-9f00-4bff-982e-7a13ab3335e0.json][...3335e0.json]] |
+|        3 |      300 | create_and_list_users                |   97.0% | [[file:./grisou/cockroachdb-3-150/results/report-cc49b2b8-2780-4eb6-a638-7dfdd1504641.json][...504641.json]] |
+|        3 |      300 | create_and_update_user               |  100.0% | [[file:./grisou/cockroachdb-3-150/results/report-51383199-f210-42e0-a0f4-8d194e76e861.json][...76e861.json]] |
+|        3 |      300 | create_user_set_enabled_and_delete   |   79.8% | [[file:./grisou/cockroachdb-3-150/results/report-ce467e24-cd55-4708-8a43-f67ab5dbec61.json][...dbec61.json]] |
+|        3 |      300 | create_user_update_password          |   97.0% | [[file:./grisou/cockroachdb-3-150/results/report-a83343dd-8f1c-420f-a022-185bb2e849a4.json][...e849a4.json]] |
+|        3 |      300 | get_entities                         |   96.0% | [[file:./grisou/cockroachdb-3-150/results/report-ad876f2e-789d-4909-a0a4-e88aed2fe99e.json][...2fe99e.json]] |
+|       25 |      LAN | authenticate_user_and_validate_token |  100.0% | [[file:./grisou/cockroachdb-25-0/results/report-c0a221de-22ee-4dc3-b190-7fd6a52fdb97.json][...2fdb97.json]] |
+|       25 |      LAN | create_add_and_list_user_roles       |   99.0% | [[file:./grisou/cockroachdb-25-0/results/report-fc0dbdcf-4dc6-477d-ad18-346af2031e21.json][...031e21.json]] |
+|       25 |      LAN | create_and_list_tenants              |  100.0% | [[file:./grisou/cockroachdb-25-0/results/report-a76cf446-f362-4753-befd-181d310286e3.json][...0286e3.json]] |
+|       25 |      LAN | create_and_list_users                |   91.0% | [[file:./grisou/cockroachdb-25-0/results/report-fff843a4-0dc4-448d-9321-9025c3541774.json][...541774.json]] |
+|       25 |      LAN | create_and_update_user               |  100.0% | [[file:./grisou/cockroachdb-25-0/results/report-7ebc3c2b-5cfa-4c3d-bfca-a7c9e8ea24eb.json][...ea24eb.json]] |
+|       25 |      LAN | create_user_set_enabled_and_delete   |   92.4% | [[file:./grisou/cockroachdb-25-0/results/report-ad89dda2-2be3-4496-9237-c8ef0524ded0.json][...24ded0.json]] |
+|       25 |      LAN | create_user_update_password          |  100.0% | [[file:./grisou/cockroachdb-25-0/results/report-d8e1e880-aab2-4148-9e71-15af3c600cbb.json][...600cbb.json]] |
+|       25 |      LAN | get_entities                         |   97.0% | [[file:./grisou/cockroachdb-25-0/results/report-0398aabd-8579-4419-9843-376e3bbde6ad.json][...bde6ad.json]] |
+|       25 |      300 | authenticate_user_and_validate_token |  100.0% | [[file:./grisou/cockroachdb-25-150/results/report-d39535f1-ea71-4fef-9a10-6f11a4eb818e.json][...eb818e.json]] |
+|       25 |      300 | create_add_and_list_user_roles       |   97.0% | [[file:./grisou/cockroachdb-25-150/results/report-1959fb6c-e269-40a9-b8ea-cc5401b74c9a.json][...b74c9a.json]] |
+|       25 |      300 | create_and_list_tenants              |  100.0% | [[file:./grisou/cockroachdb-25-150/results/report-f69edbad-114c-4e2c-85a2-9172a611cae1.json][...11cae1.json]] |
+|       25 |      300 | create_and_list_users                |   97.0% | [[file:./grisou/cockroachdb-25-150/results/report-68406eac-02ba-4885-9028-1f2ea48ff1ff.json][...8ff1ff.json]] |
+|       25 |      300 | create_and_update_user               |  100.0% | [[file:./grisou/cockroachdb-25-150/results/report-541f6a93-6b93-4c4a-bb38-c094bbc0d667.json][...c0d667.json]] |
+|       25 |      300 | create_user_set_enabled_and_delete   |   82.0% | [[file:./grisou/cockroachdb-25-150/results/report-fbd9ca2d-b6e0-4f9b-a2bc-72fde8b8c53d.json][...b8c53d.json]] |
+|       25 |      300 | create_user_update_password          |   96.0% | [[file:./grisou/cockroachdb-25-150/results/report-ebd08a83-8198-408b-8d51-d8fc21887ca9.json][...887ca9.json]] |
+|       25 |      300 | get_entities                         |   94.0% | [[file:./grisou/cockroachdb-25-150/results/report-8db15adc-72d4-44e8-9185-7e7a4960becd.json][...60becd.json]] |
+
+*** Galera experiments
+Listing [[lst:galera_xps]] shows how to compute the list of experiments
+for Galera (~filter(is_galera)~), sorted by the size of the cluster
+and the Round Trip Time between nodes
+(~order_by(xp_csize_rtt_scn_order)~). Table [[tab:galera_xps]] presents
+the list of experiments.
+
+#+CAPTION: Access to Galera Experiments.
+#+NAME: lst:galera_xps
+#+BEGIN_SRC python :results silent
+GALERA_XPS = XPS.filter(is_galera).order_by(xp_csize_rtt_scn_order)
+#+END_SRC
+
+#+HEADER: :colnames yes :hlines yes
+#+NAME: lst:galera_xps_org
+#+BEGIN_SRC python :results table :exports results
+xp2orgtable(GALERA_XPS)
+#+END_SRC
+
+#+CAPTION: Galera Experiments.
+#+NAME: tab:galera_xps
+#+ATTR_HTML: :class table-striped
+#+RESULTS: lst:galera_xps_org
+| #Cluster | RTT (ms) | Keystone Scenario                    | Success | Filepath       |
+|----------+----------+--------------------------------------+---------+----------------|
+|        3 |      LAN | authenticate_user_and_validate_token |  100.0% | [[file:./grisou/mariadb-3-0/results/report-fe5c3758-c440-49bb-8d0c-cd7f7073b298.json][...73b298.json]] |
+|        3 |      LAN | create_add_and_list_user_roles       |  100.0% | [[file:./grisou/mariadb-3-0/results/report-1719f1e1-6f3a-4c79-a827-1c25372718b5.json][...2718b5.json]] |
+|        3 |      LAN | create_and_list_tenants              |  100.0% | [[file:./grisou/mariadb-3-0/results/report-78bd26a6-2418-4799-a0c9-dfc9995efb41.json][...5efb41.json]] |
+|        3 |      LAN | create_and_list_users                |  100.0% | [[file:./grisou/mariadb-3-0/results/report-7116626f-8797-407d-aa2d-39f0ef178f4a.json][...178f4a.json]] |
+|        3 |      LAN | create_and_update_user               |  100.0% | [[file:./grisou/mariadb-3-0/results/report-59d7bac5-1e01-4d29-8a7e-7f0eb7997f39.json][...997f39.json]] |
+|        3 |      LAN | create_user_set_enabled_and_delete   |  100.0% | [[file:./grisou/mariadb-3-0/results/report-34c0aaa5-26a7-4e7b-b61e-2750ba4a8131.json][...4a8131.json]] |
+|        3 |      LAN | create_user_update_password          |  100.0% | [[file:./grisou/mariadb-3-0/results/report-0fa53954-d8f3-4c06-b254-f6f7047cea65.json][...7cea65.json]] |
+|        3 |      LAN | get_entities                         |  100.0% | [[file:./grisou/mariadb-3-0/results/report-1d2cd67c-a3e5-469c-89b3-47fa3c465217.json][...465217.json]] |
+|        3 |      100 | authenticate_user_and_validate_token |  100.0% | [[file:./grisou/mariadb-3-50/results/report-19932a7c-bd6c-4418-8fe1-18cf8f1e934a.json][...1e934a.json]] |
+|        3 |      100 | create_add_and_list_user_roles       |  100.0% | [[file:./grisou/mariadb-3-50/results/report-fdd7be47-fe64-4616-b792-478bce20b8c2.json][...20b8c2.json]] |
+|        3 |      100 | create_and_list_tenants              |  100.0% | [[file:./grisou/mariadb-3-50/results/report-d507c1b6-fd78-452c-a759-1f2ae9af8c22.json][...af8c22.json]] |
+|        3 |      100 | create_and_list_users                |  100.0% | [[file:./grisou/mariadb-3-50/results/report-5c4f301d-fe06-49fb-9cfc-644faf01b6af.json][...01b6af.json]] |
+|        3 |      100 | create_and_update_user               |  100.0% | [[file:./grisou/mariadb-3-50/results/report-2a1ad2c7-01e4-4066-a64d-9fb805eab05c.json][...eab05c.json]] |
+|        3 |      100 | create_user_set_enabled_and_delete   |  100.0% | [[file:./grisou/mariadb-3-50/results/report-837b1310-4961-4a4d-95fb-c1868ab6fe59.json][...b6fe59.json]] |
+|        3 |      100 | create_user_update_password          |  100.0% | [[file:./grisou/mariadb-3-50/results/report-834d93b4-5be2-4997-8835-e8c3a8cb46cc.json][...cb46cc.json]] |
+|        3 |      100 | get_entities                         |  100.0% | [[file:./grisou/mariadb-3-50/results/report-64e6aac0-8186-4088-8713-86c193199273.json][...199273.json]] |
+|        3 |      300 | authenticate_user_and_validate_token |  100.0% | [[file:./grisou/mariadb-3-150/results/report-429cc652-c578-4040-85f8-bd6702e00977.json][...e00977.json]] |
+|        3 |      300 | create_add_and_list_user_roles       |  100.0% | [[file:./grisou/mariadb-3-150/results/report-eab2e052-f59d-4d87-906c-1632f7d1f360.json][...d1f360.json]] |
+|        3 |      300 | create_and_list_tenants              |  100.0% | [[file:./grisou/mariadb-3-150/results/report-4577fc71-f616-4286-9c03-29378b452df4.json][...452df4.json]] |
+|        3 |      300 | create_and_list_users                |  100.0% | [[file:./grisou/mariadb-3-150/results/report-9e7c7a52-f394-42e8-aff2-0df2963d9b47.json][...3d9b47.json]] |
+|        3 |      300 | create_and_update_user               |  100.0% | [[file:./grisou/mariadb-3-150/results/report-fc34136e-457f-4754-bb57-abb6f5397f5a.json][...397f5a.json]] |
+|        3 |      300 | create_user_set_enabled_and_delete   |  100.0% | [[file:./grisou/mariadb-3-150/results/report-391e300c-64b5-482a-8538-7086099da618.json][...9da618.json]] |
+|        3 |      300 | create_user_update_password          |  100.0% | [[file:./grisou/mariadb-3-150/results/report-d75f9204-0e21-4675-99b0-9c9e17986cf0.json][...986cf0.json]] |
+|        3 |      300 | get_entities                         |  100.0% | [[file:./grisou/mariadb-3-150/results/report-c5ceab07-429a-4ed2-af32-1d453143e1b9.json][...43e1b9.json]] |
+|       25 |      LAN | authenticate_user_and_validate_token |  100.0% | [[file:./grisou/mariadb-25-0/results/report-d7376cc9-0ac9-479b-bca0-748c4a93d08b.json][...93d08b.json]] |
+|       25 |      LAN | create_add_and_list_user_roles       |  100.0% | [[file:./grisou/mariadb-25-0/results/report-69e1095a-db00-498d-9f7c-fac301719a17.json][...719a17.json]] |
+|       25 |      LAN | create_and_list_tenants              |  100.0% | [[file:./grisou/mariadb-25-0/results/report-4fcf2ed3-0b89-4836-bb04-0185c63c712d.json][...3c712d.json]] |
+|       25 |      LAN | create_and_list_users                |  100.0% | [[file:./grisou/mariadb-25-0/results/report-1bf0cd94-7d12-431c-831e-f4463dd006f6.json][...d006f6.json]] |
+|       25 |      LAN | create_and_update_user               |  100.0% | [[file:./grisou/mariadb-25-0/results/report-062db9a1-ac97-4bc6-be8e-fe5ce073b0fd.json][...73b0fd.json]] |
+|       25 |      LAN | create_user_set_enabled_and_delete   |  100.0% | [[file:./grisou/mariadb-25-0/results/report-da750659-6785-407b-80da-384731ed5d6a.json][...ed5d6a.json]] |
+|       25 |      LAN | create_user_update_password          |  100.0% | [[file:./grisou/mariadb-25-0/results/report-7a5f9ca5-0cdf-4d33-bd19-b27330e30860.json][...e30860.json]] |
+|       25 |      LAN | get_entities                         |  100.0% | [[file:./grisou/mariadb-25-0/results/report-869bdf1c-a55a-40c2-b3fb-2d6edf95d4c9.json][...95d4c9.json]] |
+|       25 |      100 | authenticate_user_and_validate_token |  100.0% | [[file:./grisou/mariadb-25-50/results/report-679149d4-6d6a-4f4c-8ba8-8b15edce22f3.json][...ce22f3.json]] |
+|       25 |      100 | create_add_and_list_user_roles       |  100.0% | [[file:./grisou/mariadb-25-50/results/report-f9c0f2bc-8b7f-4be7-8424-78ca68dacef7.json][...dacef7.json]] |
+|       25 |      100 | create_and_list_tenants              |  100.0% | [[file:./grisou/mariadb-25-50/results/report-d6b5d871-5944-4959-9116-3702f9d3e97d.json][...d3e97d.json]] |
+|       25 |      100 | create_and_list_users                |  100.0% | [[file:./grisou/mariadb-25-50/results/report-16b0e847-4963-4c38-a11d-16737340141c.json][...40141c.json]] |
+|       25 |      100 | create_and_update_user               |  100.0% | [[file:./grisou/mariadb-25-50/results/report-0c838c85-c81c-4e02-a6d8-c236dc361add.json][...361add.json]] |
+|       25 |      100 | create_user_set_enabled_and_delete   |  100.0% | [[file:./grisou/mariadb-25-50/results/report-44204b98-5a47-40f4-9ecc-e55fd70be46a.json][...0be46a.json]] |
+|       25 |      100 | create_user_update_password          |  100.0% | [[file:./grisou/mariadb-25-50/results/report-4ee4014a-570b-4550-8713-010494d10542.json][...d10542.json]] |
+|       25 |      100 | get_entities                         |  100.0% | [[file:./grisou/mariadb-25-50/results/report-83d49662-fc8a-4fa3-8f4b-c22a31b122c3.json][...b122c3.json]] |
+|       25 |      300 | authenticate_user_and_validate_token |  100.0% | [[file:./grisou/mariadb-25-150/results/report-bfe3e125-c125-4966-aa44-53b71affcf58.json][...ffcf58.json]] |
+|       25 |      300 | create_add_and_list_user_roles       |  100.0% | [[file:./grisou/mariadb-25-150/results/report-4cf2a828-0a0e-4673-bc74-7dce993ee24d.json][...3ee24d.json]] |
+|       25 |      300 | create_and_list_tenants              |  100.0% | [[file:./grisou/mariadb-25-150/results/report-856915fc-8f13-4f1b-aaf2-1a0863ac5435.json][...ac5435.json]] |
+|       25 |      300 | create_and_list_users                |  100.0% | [[file:./grisou/mariadb-25-150/results/report-da7e7848-b97b-41f0-a7ac-eb05cdbdd225.json][...bdd225.json]] |
+|       25 |      300 | create_and_update_user               |  100.0% | [[file:./grisou/mariadb-25-150/results/report-0a39f2ca-868d-4c84-8c5f-2e37d931690f.json][...31690f.json]] |
+|       25 |      300 | create_user_set_enabled_and_delete   |  100.0% | [[file:./grisou/mariadb-25-150/results/report-0819f90a-ef13-4d9b-93de-908cbf53dd62.json][...53dd62.json]] |
+|       25 |      300 | create_user_update_password          |  100.0% | [[file:./grisou/mariadb-25-150/results/report-03bcc0d4-32b9-4035-9d90-a10240544314.json][...544314.json]] |
+|       25 |      300 | get_entities                         |  100.0% | [[file:./grisou/mariadb-25-150/results/report-fe4f446c-4f9d-4f2b-97de-e663b7c1fc24.json][...c1fc24.json]] |
+
+** Query Rally Results
+The Rally Json file contains values that give the scenario completion
+time per keystone operations at a certain Rally run. These values must
+be analyzed to evaluate which backend best suits for an OpenStack for
+the edge. And a good python module to data analysis is [[https://pandas.pydata.org/][Pandas]]. Thus,
+the function ~dataframe_per_operations~ (see
+lst.[[lst:dataframe_per_operations]] -- part of [[lst:make_xp][~make_xp~]]) takes the Rally
+json and returns a Pandas [[https://pandas.pydata.org/pandas-docs/stable/generated/pandas.DataFrame.html#pandas.DataFrame][~DataFrame~]].
+
+#+NAME: lst:dataframe_per_operations
+#+BEGIN_SRC python :results silent :exports src
+# Json path to the completion time series
+JPATH_SERIES = '$.tasks[0].subtasks[0].workloads[0].data[len(@.error) is 0].atomic_actions'
+def dataframe_per_operations(rally_values: objectpath.Tree) -> pd.DataFrame:
+    "Makes a 2d pd.DataFrame of completion time per keystone operations."
+    return pd.DataFrame.from_items(
+        items=(seq(rally_values.execute(JPATH_SERIES))
+                 .flatten()
+                 .group_by(itemgetter('name'))
+                 .map_on_value(lambda it: it['finished_at'] - it['started_at'])))
+#+END_SRC
+
+The DataFrame is a table that lists all the completion times in second
+for a certain Rally scenario. A column references a Keystone
+operations and row labels (index) references the Rally run. Next
+snippet (see, lst.[[lst:crdb_cltenants]]) is an example of the DataFrame
+for the [[*keystone/create-and-list-tenants]["Creat and List Tenants"]] Rally scenario with ~25~ nodes in the
+CRDB cluster and a ~LAN~ latency between each node. The ~lambda~ takes
+the DataFrame and transforms it to add a "Total" column. Table
+[[tab:crdb_cltenants]] presents the output of this DataFrame.
+
+
+#+CAPTION: Access to the DataFrame of Rally ~create_and_list_tenants~.
+#+NAME: lst:crdb_cltenants
+#+BEGIN_SRC python :results silent
+CRDB_CLTENANTS = (XPS
+    .filter(is_keystone_scn('create_and_list_tenants'))
+    .filter(when_cluster_size(25))
+    .filter(is_crdb)
+    .filter(when_latency(0))
+    .map(attrgetter('dataframe'))                    # Get DataFrame
+    .map(lambda df: df.assign(Total=df.sum(axis=1))) # Add Total Column
+    .head())
+#+END_SRC
+
+#+HEADER: :rownames yes :colnames yes :hlines yes
+#+NAME: lst:crdb_cltenants_org
+#+BEGIN_SRC python :results table :exports results
+df2orgtable(CRDB_CLTENANTS)
+#+END_SRC
+
+#+CAPTION: Entries for Rally ~create_and_list_tenants~,
+#+CAPTION: 25 CRDB nodes, LAN latency.
+#+NAME: tab:crdb_cltenants
+#+RESULTS: lst:crdb_cltenants_org
+|   | keystone_v3.create_project | keystone_v3.list_projects | Total |
+|---+----------------------------+---------------------------+-------|
+| 0 |                      0.197 |                     0.021 | 0.218 |
+| 1 |                      0.194 |                     0.022 | 0.215 |
+| 2 |                      0.191 |                     0.021 | 0.212 |
+| 3 |                      0.220 |                     0.022 | 0.242 |
+| 4 |                      0.212 |                     0.022 | 0.234 |
+| 5 |                      0.199 |                     0.022 | 0.222 |
+| 6 |                      0.211 |                     0.021 | 0.232 |
+| 7 |                      0.221 |                     0.023 | 0.245 |
+| 8 |                      0.242 |                     0.023 | 0.265 |
+| 9 |                      0.201 |                     0.023 | 0.224 |
+
+A pandas DataFrame presents the benefits of easily applying a wide
+range of analyses. As an example, the following snippet (see,
+lst.[[lst:crdb_cltenants_describe]]) computes the number of Rally runs
+(i.e., ~count~), mean and standard deviation (i.e., ~mean~, ~std~),
+the fastest and longest completion time (i.e., ~min~, ~max~), and the
+25th, 50th and 75th percentiles (i.e., ~25%~, ~50%~, ~75%~). The
+~transpose~ method transpose row labels (index) and columns. Table
+[[tab:crdb_cltenants_describe]] presents the output of the analysis.
+
+#+CAPTION: Analyse the DataFrame of Rally ~create_and_list_tenants~.
+#+NAME:lst:crdb_cltenants_describe
+#+BEGIN_SRC python :results silent
+CRDB_CLTENANTS_ANALYSIS = CRDB_CLTENANTS.describe().transpose()
+#+END_SRC
+
+#+HEADER: :rownames yes :colnames yes :hlines yes
+#+NAME:lst:crdb_cltenants_describe_org
+#+BEGIN_SRC python :results table :exports results
+df2orgtable(CRDB_CLTENANTS_ANALYSIS)
+#+END_SRC
+
+#+CAPTION: Analyses of Rally ~create_and_list_tenants~,
+#+CAPTION: 25 CRDB nodes, LAN latency.
+#+NAME:tab:crdb_cltenants_describe
+#+RESULTS: lst:crdb_cltenants_describe_org
+|                            |  count |  mean |   std |   min |   25% |   50% |   75% |   max |
+|----------------------------+--------+-------+-------+-------+-------+-------+-------+-------|
+| keystone_v3.create_project | 10.000 | 0.209 | 0.016 | 0.191 | 0.198 | 0.206 | 0.218 | 0.242 |
+| keystone_v3.list_projects  | 10.000 | 0.022 | 0.001 | 0.021 | 0.021 | 0.022 | 0.023 | 0.023 |
+| Total                      | 10.000 | 0.231 | 0.016 | 0.212 | 0.219 | 0.228 | 0.240 | 0.265 |
+
+** High level Queries                                              :noexport:
+Functions that do the heavy lifting for the rest of this notebook.
+#+BEGIN_SRC python :results silent
+def filter_percentile(q: float) -> Callable[[pd.DataFrame], pd.DataFrame]:
+    "Removes values upper than percentile `q` of a Rally based DataFrame"
+    def find_column_with_biggest_impact(df: pd.DataFrame) -> str:
+        "Returns the column's name with values that most impacts the plot crushing"
+        return df.std().idxmax()
+    # Curry
+    def _filter(df: pd.DataFrame) -> pd.DataFrame:
+        column_with_bimpact = find_column_with_biggest_impact(df)
+        percentile_of_bimpact = df.quantile(q)[column_with_bimpact]
+        return df[df[column_with_bimpact] < percentile_of_bimpact]
+    #
+    return _filter
+
+def push_in_xpdf(prop: str) -> Callable[[XP], XP]:
+    "Pushes `XP.prop` prop value into `XP.dataframe` under `prop` column"
+    def add_const_column(df: pd.DataFrame,
+                         column_value: any,
+                         column_name: str) -> pd.DataFrame:
+        "Adds `df` column `column_name` with value `column_value`"
+        nb_dfrows = df.index.size
+        new_column = {column_name: [column_value for i in range(nb_dfrows)]}
+        return df.assign(**new_column)
+    #
+    def set_xp_df(xp: XP, new_df: pd.DataFrame) -> XP:
+        "Sets dataframe `new_df` of XP `xp`"
+        return XP(scenario=xp.scenario,
+                  filepath=xp.filepath,
+                  rdbms=xp.rdbms,
+                  cluster_size=xp.cluster_size,
+                  latency=xp.latency,
+                  success=xp.success,
+                  dataframe=new_df)
+    # Curry
+    def _push(xp: XP) -> XP:
+        column_value = attrgetter(prop)(xp)
+        column_name  = prop
+        df_with_new_col = add_const_column(xp.dataframe,
+                                           column_value,
+                                           column_name)
+        return set_xp_df(xp, df_with_new_col)
+    #
+    return _push
+
+def results_per_scn_prop(prop: str, xps: List[XP]) -> List[
+        Tuple[str, pd.DataFrame, pd.DataFrame]]:
+    return (xps
+            # Index XPs by scenario: [(scenario, [xps-csize{3/25/45}-lat0])]
+            .group_by(attrgetter('scenario'))
+            # Push values of `xp.prop` and `xp.rdbms` in the
+            # dataframe. And only keep a under 90 percentile.
+            .map_on_value(push_in_xpdf(prop))
+            .map_on_value(push_in_xpdf('rdbms'))
+            .map_on_value(lambda xp: xp.dataframe)
+            .map_on_value(filter_percentile(.90))
+            # Get one big DataFrame per scenario:
+            # [(scenario, df{keystone.op1, keystone.op2, ..., cluster_size, rdbms})]
+            .on_value(lambda dfs: pd.concat(dfs.to_list()))
+            # Groupe by `xp.rdbms` and `xp.cluster_size`, to compute
+            # mean and std per each group:
+            .on_value(lambda df: df.groupby(['rdbms', prop]))
+            .map(lambda scn_gdf: (
+                scn_gdf[0],
+                scn_gdf[1].aggregate('mean'),
+                scn_gdf[1].apply(lambda df: df.sum(axis=1).std())))
+          )
+#+END_SRC
+
+* TODO Cluster Size Impact
+
+- TODO: describe the experimentation protocol
+- TODO: Link the github juice code
+
+In this test, the size of the database cluster varies between 3, 25
+and 50. The test evaluates how the completion time of Rally scenarios
+varies, depending of the size of the cluster.
+
+Average completion time
+#+BEGIN_SRC python :results silent
+# .on_value(lambda df:
+# df.reset_index(level=0).rename(columns={'index': '#Cluster'}))
+def results_per_csize(xps: List[XP]) -> List[Tuple[str, pd.DataFrame]]:
+    return results_per_scn_prop(prop='cluster_size', xps=xps)
+
+def results_per_latency(xps: List[XP]) -> List[Tuple[str, pd.DataFrame]]:
+    return results_per_scn_prop(prop='latency', xps=xps)
+
+
+XPS_PER_CSIZE = results_per_csize(XPS.filter(when_latency(0)))
+XPS_PER_LAT = results_per_latency(XPS.filter(when_cluster_size(25)))
+
+scn, df_mean, df_std = XPS_PER_CSIZE.head()
+#+END_SRC
+
+#+BEGIN_SRC python :results silent
+def frange(stop, step=1):
+  return [ i * step for i in range(stop) ]
+
+def scenario_bar_plot(criteria, df_mean, df_std, ax):
+  # index of df (e.g., 3, 25, 45 for "cluster_size" `criteria`)
+  criteria_idx   = df_mean.index.get_level_values(criteria).drop_duplicates().values
+  # operations of df (e.g., keystone.create_user,
+  # keystone.update_user)
+  operations     = df_mean.columns.values
+  # Number of bar in the plot is number of criteria index (eg, 3, 25,
+  # 45).
+  nb_bar = len(criteria_idx)
+  # Size of a bar is 100% of the x view divided by the number of bar.
+  bar_width = 1.0/nb_bar
+  bar_index = frange(nb_bar, step=bar_width)
+  #
+  for (iop, op) in enumerate(operations):
+    # Stack values on top of the previous operation
+    bottom = iop if iop == 0 else df_mean.loc[:, :df_mean.columns[iop - 1]].sum(axis=1).values
+    # print std on the last element of the stack
+    yerr   = df_std.values if iop == (len(df_mean.columns) - 1) else None
+    # Plot
+    ax.bar(bar_index, df_mean.loc[:, op].values, bar_width, bottom,
+           yerr=yerr,
+           label=op)
+  #
+  return bar_index
+
+def creteria_bar_plot(criteria, ftitle, xps, filename):
+    subfig_width  = 3 # inch
+    subfig_height = 5 # inch
+    nscns  = len(xps)
+    nrdbms = len(RDBMS)
+    fig, axs = plt.subplots(nrows=nrdbms,
+                            ncols=nscns,
+                            figsize=(subfig_width  * nscns,
+                                     subfig_height * nrdbms),
+                            sharex=True)
+    #
+    for iscn, (scn, (df_mean, df_std)) in enumerate(xps):
+        for irdbm, rdbm in enumerate(RDBMS):
+            ax = axs[irdbm][iscn]
+            df_mean_rdbm = df_mean.loc[rdbm]
+            df_std_rdbm  = df_std.loc[rdbm]
+            #
+            bar_index = scenario_bar_plot(criteria, df_mean_rdbm, df_std_rdbm, ax)
+            #
+            # Only print y label for the first column
+            if iscn == 0:
+                ax.set_ylabel(ftitle % rdbm)
+            #
+            # Only print scenario name for the first row
+            if irdbm == 0:
+                ax.set_title(scn.replace('KeystoneBasic.', '')[:20], loc='left')
+            #
+            # Only print x label for last row
+            if irdbm == len(RDBMS) - 1:
+                # ax.set_xticks(bar_index)
+                criteria_idx = df_mean_rdbm.index.get_level_values(criteria).drop_duplicates().values
+                operations = df_mean.columns.values
+                ax.set_xticks(bar_index)
+                ax.set_xticklabels(criteria_idx)
+                # legend under
+                box = ax.get_position()
+                ax.set_position([box.x0, box.y0 + box.height * 0.1,
+                                 box.width, box.height * 0.9])
+                ax.legend(loc='upper center', bbox_to_anchor=(0.5, -0.1))
+    #
+    fig.savefig(filename)
+    return filename
+
+#+END_SRC
+
+#+BEGIN_SRC python :results file
+creteria_bar_plot('cluster_size', "%s Completion Time (s)", XPS_PER_CSIZE, 'foo1.png')
+#+END_SRC
+
+#+RESULTS:
+
+#+BEGIN_SRC python :results file
+creteria_bar_plot('latency', "%s Completion Time (s)", XPS_PER_LAT, 'foo2.png')
+#+END_SRC
+
+#+RESULTS:
+
+#+BEGIN_COMMENT
+#+BEGIN_SRC python :results file
+# fig, axs = plt.subplots(len(RDBMS), len(XPS_PER_CSIZE), sharex=True, sharey=True)
+def shift_index(i, index):
+  return [ ind + i for ind in index ]
+
+def bar_plot(df_mean, df_std, ax):
+    csizes = df_mean.index.get_level_values('cluster_size').drop_duplicates().values
+    rdbms  = df_mean.index.get_level_values('rdbms').drop_duplicates().values
+    bar_width = 1.0/(len(rdbms)+1)
+    #
+    for (i, rdbm) in enumerate(rdbms):
+        index = shift_index(i * bar_width, range(len(csizes)))
+        for (iop, op) in enumerate(df_mean.columns):
+            bottom = iop if iop == 0 else df_mean.loc[rdbm, df_mean.columns[iop - 1]]
+            ax.bar(index, df_mean.loc[rdbm, op].values, bar_width, bottom)
+
+fig, ax = plt.subplots()
+bar_plot(df[0], df[1], ax)
+fig.savefig('foo1.svg')
+'foo1.svg'
+#+END_SRC
+
+#+RESULTS:
+[[file:foo1.svg]]
+#+END_COMMENT
+
+** CockroachDB
+
+** Galera
+
+* TODO Latency Impact
+** Throughput Expectations
+See [[http://enos.irisa.fr/html/wan_g5k/cpt10/][cpt10-lat*-los0/*.stats]] for raw measures.
+
+#+NAME: throughput-data
+#+CAPTION: Throughput Expectations
+| Latency (ms) | Throughput (Mbits/s) |
+|--------------+----------------------|
+|     0.150614 |          9410.991784 |
+|    20.000000 |          1206.381685 |
+|    50.000000 |           480.173601 |
+|   100.000000 |           234.189943 |
+|   200.000000 |           115.890071 |
+
+* TODO Do the size of the Database matter?
+From
+http://galeracluster.com/2016/08/optimized-state-snapshot-transfers-in-a-wan-environment/
+#+BEGIN_QUOTE
+If a node joins the cluster either for the first time or after a
+period of prolonged downtime, it may need to obtain a complete
+snapshot of the database from some other node. This operation is
+called State Snapshot Transfer or SST, and is often reasonably quick
+in a LAN environment.
+
+In a geo-distributed cluster, however, the dataset may need to travel
+over a slow WAN link. A transfer that takes seconds over a 10Gb
+network can take hours over a cable modem.
+
+SST does not happen during the normal operation of the cluster, but
+may be needed during an outage situation which is already a stressful
+time for the DevOps. During SST, the joining node is not available and
+the donating node may be in a read-only state or have degraded
+performance.
+#+END_QUOTE
+
+Note: CRDB may shine during commissioning over WAN. It could be cool
+to add a test on that particular topic (ie, measuring the downtime
+when commissioning a new node -- it should be 0 on CRDB).
+
+* COMMENT Footer
