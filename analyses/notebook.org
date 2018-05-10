@@ -255,25 +255,30 @@ The Juice implementation for this gauging is available on GitHub at
 from typing import (Dict, Union, Iterator,
                     Callable, List, Tuple,
                     TypeVar) # Type annoation
-import glob                    # Unix style pathname
+
+T = TypeVar('T')
+U = TypeVar('U')
+
+import glob                  # Unix style pathname
 from operator import *
 import re
 import json
+import textwrap
 
 # Other libs
 from dataclasses import dataclass   # Dataclass à la python 3.7
 import objectpath                   # XPath for json
-import pandas as pd                 # data series analyses
-import matplotlib.pyplot as plt     # ploting
+import pandas as pd                 # Data series analyses
+import matplotlib                   # Ploting
+import matplotlib.pyplot as plt     # ^
 import seaborn as sns               # ^
 import functional                   # For my sanity
 from functional import seq          # ^
 from functional.util import compose # ^
 
-RDBMS = [ 'mariadb', 'cockroachdb' ]
 
-T = TypeVar('T')
-U = TypeVar('U')
+# List of RDBMS considered in this notebook
+RDBMSS = [ 'mariadb', 'cockroachdb' ]
 
 # -- Utils
 def df2orgtable(df: pd.DataFrame, index_name="") -> List[List[str]]:
@@ -320,7 +325,13 @@ def _and(filters: List[Callable[[T], bool]]) -> Callable[[T], bool]:
     # Curry
     return __and
 
-# Monkey patch PyFunctional with new combinator
+def df_add_const_column(df: pd.DataFrame, cvalue: T, cname: str) -> pd.DataFrame:
+    "Adds column `cname` with value `cvalue` to `df`."
+    nb_dfrows = df.index.size
+    new_column = {cname: [cvalue for i in range(nb_dfrows)]}
+    return df.assign(**new_column)
+
+# -- Monkey patch PyFunctional with new combinator
 def on_value_t(f: Callable[[T], U]):
     """Applies f on the second element of a (k, v).
 
@@ -402,7 +413,6 @@ accessors for all of them thanks to the [[https://docs.python.org/3/library/glob
 # XP_PATHS = './marie/'
 XP_PATHS = './grisou/'
 CRDB_XP_PATHS = glob.glob(XP_PATHS + 'cockroachdb-*/results/*.json')
-# CRDB_XP_PATHS = glob.glob('./ecotype/' + 'cockroachdb-*/results/*.json')
 GALERA_XP_PATHS = glob.glob(XP_PATHS + 'mariadb-*/results/*.json')
 #+END_SRC
 
@@ -436,7 +446,7 @@ extract only interested data.
 
 #+CAPTION: Builds an ~XP~ object from a Rally Json Result File.
 #+NAME: lst:make_xp
-#+BEGIN_SRC python -r :results silent :noweb yes
+#+BEGIN_SRC python -r :results silent :noweb no-export
 def make_xp(rally_path: str) -> XP:
     # Find XP name in the `rally_path`
     RE_XP = r'(?:mariadb|cockroachdb)-[a-zA-Z0-9\-]+'
@@ -447,7 +457,7 @@ def make_xp(rally_path: str) -> XP:
     # Json path to the success rate
     JPATH_SUCCESS = '$.tasks.subtasks[0].workloads[0].statistics.durations.total.data.success'
     #
-    <<lst:dataframe_per_operations>> # (ref:dataframe_per_operations)
+    <<lst:dataframe_per_operations>> (ref:dataframe_per_operations)
     #
     with open(rally_path) as rally_json:
         rally_values = objectpath.Tree(json.load(rally_json))
@@ -477,45 +487,19 @@ XPS = seq(CRDB_XP_PATHS + GALERA_XP_PATHS).map(make_xp)
 #+END_SRC
 
 This notebook also comes with a bunch of predicate in its toolbelt
-(see, lst. [[lst:toolbelt]]). They will ease the filtering and sorting of
-experiments.
+that ease the filtering and sorting of experiments. For instance a
+function src_python[:exports code :eval no]{def is_crdb(xp: XP) ->
+bool} only keeps CRDB experiments. And src_python[:exports code :eval
+no]{def xp_csize_rtt_scn_order(xp: XP) -> str} returns a comparable
+value to sort experiments. The complete list is available in the
+source of this notebook.
 
-#+CAPTION: Experiments ~XP~ Predicates.
-#+NAME: lst:toolbelt
-#+BEGIN_SRC python :results silent
-def is_crdb(xp: XP) -> bool:
-    "Filter for CRDB experiment."
-    return xp.rdbms == 'cockroachdb'
+#+BEGIN_SRC python :results silent :noweb no-export :exports none
+<<lst:predicate>>
 
-def is_galera(xp: XP) -> bool:
-    "Filter for Galera experiment."
-    return xp.rdbms == 'mariadb'
+<<lst:hlq>>
 
-def is_keystone_scn(scn: str) -> bool:
-    "Filter for keystone scenario `scn`."
-    return lambda xp: xp.scenario == 'KeystoneBasic.' + scn
-
-def when_latency(lat: int) -> Callable[[XP], bool]:
-    "Filter for latence `lat`."
-    return lambda xp: xp.latency == lat
-
-def when_cluster_size(csize: int) -> Callable[[XP], bool]:
-    "Filter for cluster size `csize`."
-    return lambda xp: xp.cluster_size == csize
-
-def xp_csize_rtt_scn_order(xp: XP) -> str:
-    """
-    Returns a comparable value to sort experimentation.
-
-    The sort is made on
-    1. The database type (CRDB or Galera)
-    2. Size of the cluster
-    3. Latency
-    4. Rally scenario's name
-    """
-    # Format String Syntax
-    # https://docs.python.org/2/library/string.html#format-examples
-    return f'{xp.rdbms}-{xp.cluster_size:0>3}-{xp.latency:0>3}-{xp.scenario}'
+<<lst:hlp>>
 #+END_SRC
 
 *** CockroachDB experiments
@@ -672,8 +656,9 @@ the function ~dataframe_per_operations~ (see
 lst.[[lst:dataframe_per_operations]] -- part of [[lst:make_xp][~make_xp~]]) takes the Rally
 json and returns a Pandas [[https://pandas.pydata.org/pandas-docs/stable/generated/pandas.DataFrame.html#pandas.DataFrame][~DataFrame~]].
 
+#+CAPTION: Transform Rally Results into Pandas DataFrame.
 #+NAME: lst:dataframe_per_operations
-#+BEGIN_SRC python :results silent :exports src
+#+BEGIN_SRC python :results silent
 # Json path to the completion time series
 JPATH_SERIES = '$.tasks[0].subtasks[0].workloads[0].data[len(@.error) is 0].atomic_actions'
 def dataframe_per_operations(rally_values: objectpath.Tree) -> pd.DataFrame:
@@ -704,7 +689,7 @@ CRDB_CLTENANTS = (XPS
     .filter(is_crdb)
     .filter(when_latency(0))
     .map(attrgetter('dataframe'))                    # Get DataFrame
-    .map(lambda df: df.assign(Total=df.sum(axis=1))) # Add Total Column
+    .map(lambda df: df.assign(Total=df.sum(axis=1))) # Add a Total Column
     .head())
 #+END_SRC
 
@@ -762,8 +747,49 @@ df2orgtable(CRDB_CLTENANTS_ANALYSIS)
 | keystone_v3.list_projects  | 10.000 | 0.022 | 0.001 | 0.021 | 0.021 | 0.022 | 0.023 | 0.023 |
 | Total                      | 10.000 | 0.231 | 0.016 | 0.212 | 0.219 | 0.228 | 0.240 | 0.265 |
 
-** High level Queries                                              :noexport:
+** Heavy Lifting                                                   :noexport:
 Functions that do the heavy lifting for the rest of this notebook.
+
+*** Predicates
+#+NAME: lst:predicate
+#+BEGIN_SRC python :results silent
+def is_crdb(xp: XP) -> bool:
+    "Filter for CRDB experiment."
+    return xp.rdbms == 'cockroachdb'
+
+def is_galera(xp: XP) -> bool:
+    "Filter for Galera experiment."
+    return xp.rdbms == 'mariadb'
+
+def is_keystone_scn(scn: str) -> bool:
+    "Filter for keystone scenario `scn`."
+    return lambda xp: xp.scenario == 'KeystoneBasic.' + scn
+
+def when_latency(lat: int) -> Callable[[XP], bool]:
+    "Filter for latence `lat`."
+    return lambda xp: xp.latency == lat
+
+def when_cluster_size(csize: int) -> Callable[[XP], bool]:
+    "Filter for cluster size `csize`."
+    return lambda xp: xp.cluster_size == csize
+
+def xp_csize_rtt_scn_order(xp: XP) -> str:
+    """
+    Returns a comparable value to sort experiments.
+
+    The sort is made on
+    1. The database type (CRDB or Galera)
+    2. Size of the cluster
+    3. Latency
+    4. Rally scenario's name
+    """
+    # Format String Syntax
+    # https://docs.python.org/2/library/string.html#format-examples
+    return f'{xp.rdbms}-{xp.cluster_size:0>3}-{xp.latency:0>3}-{xp.scenario}'
+#+END_SRC
+
+*** High level Queries
+#+NAME: lst:hlq
 #+BEGIN_SRC python :results silent
 def filter_percentile(q: float) -> Callable[[pd.DataFrame], pd.DataFrame]:
     "Removes values upper than percentile `q` of a Rally based DataFrame"
@@ -778,16 +804,8 @@ def filter_percentile(q: float) -> Callable[[pd.DataFrame], pd.DataFrame]:
     #
     return _filter
 
-def push_in_xpdf(prop: str) -> Callable[[XP], XP]:
-    "Pushes `XP.prop` prop value into `XP.dataframe` under `prop` column"
-    def add_const_column(df: pd.DataFrame,
-                         column_value: any,
-                         column_name: str) -> pd.DataFrame:
-        "Adds `df` column `column_name` with value `column_value`"
-        nb_dfrows = df.index.size
-        new_column = {column_name: [column_value for i in range(nb_dfrows)]}
-        return df.assign(**new_column)
-    #
+def reify_in_xpdf(attr: str) -> Callable[[XP], XP]:
+    "Pushes `XP.attr` attribute value into `XP.dataframe` under `attr` column"
     def set_xp_df(xp: XP, new_df: pd.DataFrame) -> XP:
         "Sets dataframe `new_df` of XP `xp`"
         return XP(scenario=xp.scenario,
@@ -799,37 +817,140 @@ def push_in_xpdf(prop: str) -> Callable[[XP], XP]:
                   dataframe=new_df)
     # Curry
     def _push(xp: XP) -> XP:
-        column_value = attrgetter(prop)(xp)
-        column_name  = prop
-        df_with_new_col = add_const_column(xp.dataframe,
-                                           column_value,
-                                           column_name)
+        column_value = attrgetter(attr)(xp)
+        column_name  = attr
+        df_with_new_col = df_add_const_column(xp.dataframe, column_value, column_name)
         return set_xp_df(xp, df_with_new_col)
     #
     return _push
 
-def results_per_scn_prop(prop: str, xps: List[XP]) -> List[
+def results_per_scn_attr(attr: str, xps: List[XP]) -> List[
         Tuple[str, pd.DataFrame, pd.DataFrame]]:
     return (xps
             # Index XPs by scenario: [(scenario, [xps-csize{3/25/45}-lat0])]
             .group_by(attrgetter('scenario'))
-            # Push values of `xp.prop` and `xp.rdbms` in the
-            # dataframe. And only keep a under 90 percentile.
-            .map_on_value(push_in_xpdf(prop))
-            .map_on_value(push_in_xpdf('rdbms'))
-            .map_on_value(lambda xp: xp.dataframe)
+            # Push values of `xp.attr` and `xp.rdbms` in the
+            # dataframe. And only keep values under the 90th
+            # percentile.
+            .map_on_value(reify_in_xpdf(attr))
+            .map_on_value(reify_in_xpdf('rdbms'))
+            .map_on_value(attrgetter('dataframe'))
             .map_on_value(filter_percentile(.90))
             # Get one big DataFrame per scenario:
             # [(scenario, df{keystone.op1, keystone.op2, ..., cluster_size, rdbms})]
             .on_value(lambda dfs: pd.concat(dfs.to_list()))
-            # Groupe by `xp.rdbms` and `xp.cluster_size`, to compute
-            # mean and std per each group:
-            .on_value(lambda df: df.groupby(['rdbms', prop]))
+            # Groupe by `xp.rdbms` and `xp.attr`, to compute the mean
+            # and std of each group:
+            .on_value(lambda df: df.groupby(['rdbms', attr]))
+            # Returns this as a triplet: (scn, df_mean, df_std)
             .map(lambda scn_gdf: (
                 scn_gdf[0],
                 scn_gdf[1].aggregate('mean'),
                 scn_gdf[1].apply(lambda df: df.sum(axis=1).std())))
           )
+#+END_SRC
+
+*** Ploting results
+#+NAME: lst:hlp
+#+BEGIN_SRC python :results silent
+def df_stackedbar_plot(
+        df: pd.DataFrame, std: pd.Series, ax: matplotlib.axes.Axes):
+    """Vertical bar plot of a dataframe à la `df.plot.bar(stacked=True)`
+
+    Vertical bar plot pushes all values of one row in one bar (e.g.,
+    one bar for a cluster size of 3, one bar for a cluster size of 9,
+    and one bar for a cluster size of 45) . The bar is divided in
+    mutiple parts depicting value of each column (e.g.,
+    keystone.create_user and keystone.update_user).
+
+    There are some differences with `df.plot.bar(stacked=True)`:
+    - Bars are put side by side without outer space.
+    - The std is a general one (ie, one for all columns of a bar and
+      not one per column). For this purpose, `std` is a pandas.Series
+      with one standart derivation per `df` rows. eg:
+
+    >>> std
+    cluster_size
+    3     0.086714
+    9     0.052701
+    45    0.062701
+
+    """
+    # Number of bar in the plot is number of rows in df (eg, 3, 25,
+    # 45 or 0, 50, 150).
+    nb_bar = len(df.index)
+    # Size of a bar is 100% of the x view divided by the number of bar.
+    bar_width = 1.0/nb_bar
+    bar_index = [ i * bar_width for i in range(nb_bar) ]
+    # Put on tick per bar on x axis
+    ax.set_xticks(bar_index)
+    #
+    # Plots column values one after the other (stacked). The plot is
+    # made by calling `ax.bar` with all values of the first column,
+    # then, all values of the second column, and so on, until the last
+    # column.
+    for (ic, c) in enumerate(df.columns):
+        # Stack values on top of the previous operation
+        previous_col_values = None if ic == 0 else\
+                              df.loc[:, :df.columns[ic - 1]].sum(axis=1)
+        # Print total standard deviation on the last element of the stack
+        yerr = None if ic < (len(df.columns) - 1) else std
+        # Plot
+        ax.bar(bar_index, df.loc[:, c].values, bar_width,
+               bottom=previous_col_values, yerr=yerr, label=c)
+
+def stackedbar_plot_per_rdbms_scns(
+        ytitle: str,
+        filename: str,
+        xps: List[Tuple[str, pd.DataFrame, pd.DataFrame]]):
+    """
+    Plots results per
+    """
+    subfig_width  = 4    # inch
+    subfig_height = 4    # inch
+    nscns  = len(xps)    # Number of scenarios
+    nrdbms = len(RDBMSS) # Number of rdbms
+    fig, axs = plt.subplots(nrows=nrdbms,
+                            ncols=nscns,
+                            figsize=(subfig_width  * nscns,
+                                     subfig_height * nrdbms),
+                            tight_layout=True,
+                            sharex=True)
+    #
+    for iscn, (scn, df_mean, df_std) in enumerate(xps):
+        fig_title = textwrap.shorten((scn.replace('KeystoneBasic.', '')
+                                         .replace('_', ' ')
+                                         .title()),
+                                     width=30,
+                                     placeholder='...')
+        for irdbm, rdbm in enumerate(RDBMSS):
+            ax = axs[irdbm][iscn]
+            df_mean_rdbm = df_mean.loc[rdbm]
+            std_rdbm  = df_std.loc[rdbm]
+            #
+            df_stackedbar_plot(df_mean_rdbm, std_rdbm, ax)
+            #
+            # Only print y label for the first olumn
+            if iscn == 0:
+                ax.set_ylabel(ytitle % rdbm.title())
+            #
+            # Only print scenario name for the first row
+            if irdbm == 0:
+                ax.set_title(fig_title, loc='left')
+            #
+            # Only print x label for the last row
+            if irdbm == len(RDBMSS) - 1:
+                # Print df.index as x ticks
+                ax.set_xticklabels(df_mean_rdbm.index)
+                # legend under
+                box = ax.get_position()
+                ax.set_position([box.x0, box.y0 + box.height * 0.1,
+                                 box.width, box.height * 0.9])
+                ax.legend(loc='upper center', bbox_to_anchor=(0.5, -0.1))
+    #
+    fig.align_labels()
+    fig.savefig(filename)
+    return filename
 #+END_SRC
 
 * TODO Cluster Size Impact
@@ -843,133 +964,50 @@ varies, depending of the size of the cluster.
 
 Average completion time
 #+BEGIN_SRC python :results silent
-# .on_value(lambda df:
-# df.reset_index(level=0).rename(columns={'index': '#Cluster'}))
-def results_per_csize(xps: List[XP]) -> List[Tuple[str, pd.DataFrame]]:
-    return results_per_scn_prop(prop='cluster_size', xps=xps)
+def results_per_csize(xps: List[XP]) -> List[Tuple[str, pd.DataFrame, pd.DataFrame]]:
+    return results_per_scn_attr(attr='cluster_size', xps=xps)
 
-def results_per_latency(xps: List[XP]) -> List[Tuple[str, pd.DataFrame]]:
-    return results_per_scn_prop(prop='latency', xps=xps)
+def results_per_latency(xps: List[XP]) -> List[Tuple[str, pd.DataFrame, pd.DataFrame]]:
+    return results_per_scn_attr(attr='latency', xps=xps)
 
-
-XPS_PER_CSIZE = results_per_csize(XPS.filter(when_latency(0)))
-XPS_PER_LAT = results_per_latency(XPS.filter(when_cluster_size(25)))
-
-scn, df_mean, df_std = XPS_PER_CSIZE.head()
+XPS_PER_CSIZE = results_per_csize(XPS.filter(when_latency(0)).order_by(xp_csize_rtt_scn_order))
+XPS_PER_LAT = results_per_latency(XPS.filter(when_cluster_size(25)).order_by(xp_csize_rtt_scn_order))
 #+END_SRC
+
+#+BEGIN_SRC python :results table :exports results
+scn, df_mean, df_std = XPS_PER_CSIZE.head()
+scn = textwrap.shorten((scn.replace('KeystoneBasic.', '')
+                        .replace('_', ' ')
+                        .title()),
+                       width=30,
+                       placeholder='...')
+df2orgtable(df_mean.assign(std=df_std), scn)
+#+END_SRC
+
+#+RESULTS:
+| Authenticate User And... | keystone_v3.fetch_token | keystone_v3.validate_token |   std |
+|--------------------------+-------------------------+----------------------------+-------|
+| (cockroachdb 3)          |                   0.046 |                      0.073 | 0.004 |
+| (cockroachdb 25)         |                   0.048 |                      0.076 | 0.003 |
+| (mariadb 3)              |                   0.036 |                      0.057 | 0.002 |
+| (mariadb 25)             |                   0.039 |                      0.057 | 0.003 |
 
 #+BEGIN_SRC python :results silent
-def frange(stop, step=1):
-  return [ i * step for i in range(stop) ]
-
-def scenario_bar_plot(criteria, df_mean, df_std, ax):
-  # index of df (e.g., 3, 25, 45 for "cluster_size" `criteria`)
-  criteria_idx   = df_mean.index.get_level_values(criteria).drop_duplicates().values
-  # operations of df (e.g., keystone.create_user,
-  # keystone.update_user)
-  operations     = df_mean.columns.values
-  # Number of bar in the plot is number of criteria index (eg, 3, 25,
-  # 45).
-  nb_bar = len(criteria_idx)
-  # Size of a bar is 100% of the x view divided by the number of bar.
-  bar_width = 1.0/nb_bar
-  bar_index = frange(nb_bar, step=bar_width)
-  #
-  for (iop, op) in enumerate(operations):
-    # Stack values on top of the previous operation
-    bottom = iop if iop == 0 else df_mean.loc[:, :df_mean.columns[iop - 1]].sum(axis=1).values
-    # print std on the last element of the stack
-    yerr   = df_std.values if iop == (len(df_mean.columns) - 1) else None
-    # Plot
-    ax.bar(bar_index, df_mean.loc[:, op].values, bar_width, bottom,
-           yerr=yerr,
-           label=op)
-  #
-  return bar_index
-
-def creteria_bar_plot(criteria, ftitle, xps, filename):
-    subfig_width  = 3 # inch
-    subfig_height = 5 # inch
-    nscns  = len(xps)
-    nrdbms = len(RDBMS)
-    fig, axs = plt.subplots(nrows=nrdbms,
-                            ncols=nscns,
-                            figsize=(subfig_width  * nscns,
-                                     subfig_height * nrdbms),
-                            sharex=True)
-    #
-    for iscn, (scn, (df_mean, df_std)) in enumerate(xps):
-        for irdbm, rdbm in enumerate(RDBMS):
-            ax = axs[irdbm][iscn]
-            df_mean_rdbm = df_mean.loc[rdbm]
-            df_std_rdbm  = df_std.loc[rdbm]
-            #
-            bar_index = scenario_bar_plot(criteria, df_mean_rdbm, df_std_rdbm, ax)
-            #
-            # Only print y label for the first column
-            if iscn == 0:
-                ax.set_ylabel(ftitle % rdbm)
-            #
-            # Only print scenario name for the first row
-            if irdbm == 0:
-                ax.set_title(scn.replace('KeystoneBasic.', '')[:20], loc='left')
-            #
-            # Only print x label for last row
-            if irdbm == len(RDBMS) - 1:
-                # ax.set_xticks(bar_index)
-                criteria_idx = df_mean_rdbm.index.get_level_values(criteria).drop_duplicates().values
-                operations = df_mean.columns.values
-                ax.set_xticks(bar_index)
-                ax.set_xticklabels(criteria_idx)
-                # legend under
-                box = ax.get_position()
-                ax.set_position([box.x0, box.y0 + box.height * 0.1,
-                                 box.width, box.height * 0.9])
-                ax.legend(loc='upper center', bbox_to_anchor=(0.5, -0.1))
-    #
-    fig.savefig(filename)
-    return filename
-
 #+END_SRC
 
-#+BEGIN_SRC python :results file
-creteria_bar_plot('cluster_size', "%s Completion Time (s)", XPS_PER_CSIZE, 'foo1.png')
-#+END_SRC
-
-#+RESULTS:
-
-#+BEGIN_SRC python :results file
-creteria_bar_plot('latency', "%s Completion Time (s)", XPS_PER_LAT, 'foo2.png')
-#+END_SRC
-
-#+RESULTS:
-
-#+BEGIN_COMMENT
-#+BEGIN_SRC python :results file
-# fig, axs = plt.subplots(len(RDBMS), len(XPS_PER_CSIZE), sharex=True, sharey=True)
-def shift_index(i, index):
-  return [ ind + i for ind in index ]
-
-def bar_plot(df_mean, df_std, ax):
-    csizes = df_mean.index.get_level_values('cluster_size').drop_duplicates().values
-    rdbms  = df_mean.index.get_level_values('rdbms').drop_duplicates().values
-    bar_width = 1.0/(len(rdbms)+1)
-    #
-    for (i, rdbm) in enumerate(rdbms):
-        index = shift_index(i * bar_width, range(len(csizes)))
-        for (iop, op) in enumerate(df_mean.columns):
-            bottom = iop if iop == 0 else df_mean.loc[rdbm, df_mean.columns[iop - 1]]
-            ax.bar(index, df_mean.loc[rdbm, op].values, bar_width, bottom)
-
-fig, ax = plt.subplots()
-bar_plot(df[0], df[1], ax)
-fig.savefig('foo1.svg')
-'foo1.svg'
+#+BEGIN_SRC python :results file :exports both
+stackedbar_plot_per_rdbms_scns("%s Completion Time (s)", 'foo1.svg', XPS_PER_CSIZE)
 #+END_SRC
 
 #+RESULTS:
 [[file:foo1.svg]]
-#+END_COMMENT
+
+#+BEGIN_SRC python :results file :exports both
+stackedbar_plot_per_rdbms_scns("%s Completion Time (s)", 'foo3.svg', XPS_PER_LAT)
+#+END_SRC
+
+#+RESULTS:
+[[file:foo3.svg]]
 
 ** CockroachDB
 
@@ -1013,5 +1051,3 @@ performance.
 Note: CRDB may shine during commissioning over WAN. It could be cool
 to add a test on that particular topic (ie, measuring the downtime
 when commissioning a new node -- it should be 0 on CRDB).
-
-* COMMENT Footer
