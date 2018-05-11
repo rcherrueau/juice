@@ -12,7 +12,6 @@
   docker_container:
     name: "cockroachdb-{{ inventory_hostname_short }}"
     image: "cockroachdb/cockroach:v2.0.1"
-    # hostname: "{{ inventory_hostname }}"
     detach: True
     ports:
       - 26257:26257
@@ -21,7 +20,10 @@
       - "/database:/cockroach/cockroach-data"
     command: >
       start --insecure
-      --advertise-host="{{ hostvars[inventory_hostname]['ansible_'+ database_network]['ipv4']['address'] }}"
+      # https://serverfault.com/questions/715769/ansible-change-default-value-according-to-a-condition
+      {% if item != '26257' %} --join="{{ hostvars[dbmaster_node]['ansible_'+ database_network].ipv4.address }}:26257" {% endif %}
+      --advertise-host="{{ hostvars[inventory_hostname]['ansible_'+ database_network]['ipv4']['address'] }}:{{ item }}"
+  with_sequence: start=26257 count={{ db_factor }}
   when:
     - inventory_hostname == dbmaster_node
 
@@ -38,20 +40,21 @@
     image: "cockroachdb/cockroach:v2.0.1"
     detach: True
     ports:
-      - 26257:26257
-      - 8080:8080
+      - "{{ item }}:26257"
     volumes:
-      - "/database:/cockroach/cockroach-data"
+      - "/database/{{ item }}:/cockroach/cockroach-data"
     command: >
       start --insecure
-      --join="{{ hostvars[dbmaster_node]['ansible_'+ database_network].ipv4.address }}"
-      --advertise-host="{{ hostvars[inventory_hostname]['ansible_'+ database_network]['ipv4']['address'] }}"
+      --join="{{ hostvars[dbmaster_node]['ansible_'+ database_network].ipv4.address }}:26257"
+      --advertise-host="{{ hostvars[inventory_hostname]['ansible_'+ database_network]['ipv4']['address'] }}:{{ item }}"
+  with_sequence: start=26257 count={{ db_factor }}
   when:
     - inventory_hostname != dbmaster_node
 
 - name: Waiting for other CockroachDBs to be ready
   wait_for:
     host: "{{ hostvars[inventory_hostname]['ansible_' + database_network]['ipv4']['address'] }}"
-    port: 26257
+    port: "{{ item }}"
+  with_sequence: start=26257 count={{ db_factor }}
   when:
     - inventory_hostname != dbmaster_node

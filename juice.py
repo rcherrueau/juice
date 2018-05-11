@@ -73,13 +73,15 @@ tc = {
 def deploy(conf, db, xp_name=None, **kwargs):
     """
 usage: juice deploy [--conf CONFIG_PATH] [--db {mariadb,cockroachdb,galera}]
+                    [--factor N]
 
 Claim resources from g5k and configure them.
 
 Options:
-  --conf CONFIG_PATH    Path to the configuration file describing the
+  --conf   CONFIG_PATH  Path to the configuration file describing the
                         deployment [default: ./conf.yaml]
-  --db DATABASE         Database to deploy on [default: cockroachdb]
+  --db     DATABASE     Database to deploy on [default: cockroachdb]
+  --factor N            Number of DB Nodes per Real Nodes [default: 1]
     """
     config = {}
 
@@ -99,7 +101,7 @@ Options:
     g5k(env=xp_name, config=config)
     time.sleep(30)
     inventory()
-    prepare(db=db)
+    prepare(db=db, **kwargs)
 
 
 @doc()
@@ -136,19 +138,21 @@ Generate the Ansible inventory file, requires a g5k execution
 
 @doc()
 @enostask()
-def prepare(env=None, db='cockroachdb', **kwargs):
+def prepare(env=None, db='cockroachdb', factor=1, **kwargs):
     """
-usage: juice prepare [--db {mariadb,cockroachdb,galera}]
+usage: juice prepare [--db {mariadb,cockroachdb,galera}] [--factor N]
 
 Configure the resources, requires both g5k and inventory executions
 
-  --db DATABASE         Database to deploy on [default: cockroachdb]
+  --db     DATABASE  Database to deploy on [default: cockroachdb]
+  --factor N         Number of DB Nodes per Real Nodes [default: 1]
     """
     db_validation(db)
     # Generate inventory
     extra_vars = {
         "registry": env["config"]["registry"],
         "db": db,
+        "db_factor": factor,
         # Set monitoring to True by default
         "enable_monitoring": env['config'].get('enable_monitoring', True)
     }
