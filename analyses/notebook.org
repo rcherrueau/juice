@@ -35,18 +35,33 @@ $(document).ready( function () {
 #+END_EXPORT
 
 #+BEGIN_abstract
-The /Juice/ tool runs performance analyses of distributed SQL
-databases. In particular, Juice tests and evaluates the performances
-of such SQL databases in the context of a distributed OpenStack with
-high latency network. The following notebook presents performance
-tests results together with an analyze of these results for two
-distributed SQL databases: Galera and CockroachDB.
+OpenStack is the /de facto/ open source solution for the management of
+cloud infrastructures and emerging solution for edge infrastructures
+(/i.e./, hundreds of geo-distributed micro DCs composed of dozens of
+servers). Unfortunately, some modules used by OpenStack services do
+not fulfill edge infrastructure needs. For instance, core services use
+the MariaDB Relational Database Management System (RDBMS) to store
+their state. And a single MariaDB may not cope with thousands of
+connections and intermittent network access. Therefore, is OpenStack
+technically ready for the management of an edge infrastructure? To
+find this out, we built /Juice/. Juice tests and evaluates the
+performance of Relational Database Management Systems (RDBMS) in the
+context of a distributed OpenStack with high latency network. The
+following notebook presents performance tests results together with an
+analyze of these results for three RDBMS: MariaDB, the OpenStack
+default RDBMS; Galera, the multi-master clustering solution for
+MariaDB; And CockroachDB, a NewSQL system that leverage distributed
+consensus algorithms to scale.
 #+END_abstract
 
 * TODO Introduction
 Definition of Discovery. What we try to do.
 
-Take bake hotedge paper and explain the bottom/up approach.
+Take back HotEdge'18 paper and explain the bottom/up approach
+(benefits: getting an edge IaaS manager for free by making OpenStack
+natively distributed).
+
+Tack back HotEdge'18 Central vs MultiRegion deployments
 
 - Expected size of the cluseter (10000)
 - WAN links
@@ -58,9 +73,9 @@ Take bake hotedge paper and explain the bottom/up approach.
 Description of databases, how they works, how they implements expected
 behaviors of the previous section
 
-** CockroachDB (/abbr./ CRDB).
+** MariaDB
 ** Galera in multi-master replication mode.
-
+** CockroachDB (/abbr./ CRDB).
 * TODO Considered OpenStack Services
 Keystone
 
@@ -308,11 +323,13 @@ def xp2orgtable(xps: List[any]) -> List[List[str]]:
         latency = "LAN" if xp.latency == 0 else xp.latency * 2
         scn = xp.scenario.replace('KeystoneBasic.', '')
         fp = f'[[file:{xp.filepath}][...{xp.filepath[-11:]}]]'
-        return [xp.cluster_size, latency, scn, xp.success, fp]
+        return [xp.cluster_size, latency, scn, xp.burst, xp.success, fp]
     # Make org table
-    table = [ xp2orgtablerow(xp) for xp in xps ]
-    table.insert(0, None) # Hline
-    table.insert(0, ["#Cluster", "RTT (ms)", "Keystone Scenario", "Success", "Filepath"])
+    table = [ xp2orgtablerow(xp) for xp in xps ] # Body
+    table.insert(0, None)                        # Hline
+    table.insert(0, ["#Cluster", "RTT (ms)",     # Header
+                     "Keystone Scenario",
+                     "Burst", "Success", "Filepath"])
     return table
 
 def _and(filters: List[Callable[[T], bool]]) -> Callable[[T], bool]:
@@ -386,7 +403,7 @@ sns.set_context(SNS_CONTEXT)
 sns.set_palette("muted")
 #+END_SRC
 
-* Extract and Reify Experiments with their Rally Results
+* Extract, Reify, Query Experiments and their Rally Results
 The execution of a Rally scenario (such as those seen in the previous
 section -- see [[*Considered Rally Scenarios][Considered Rally Scenarios]]) produces a json file. The
 json file contains a list of entries (path ~workloads.data~): one for
@@ -435,6 +452,7 @@ class XP:
     cluster_size: int # Size of the cluster
     latency: int      # Latency between nodes
     success: str      # Success rate (e.g., "100%")
+    burst: bool       # Experiment performed during a burst
     dataframe: pd.DataFrame  # Results in a pandas 2d DataFrame (ref:xp-dataclass-end)
 #+END_SRC
 
@@ -451,7 +469,7 @@ def make_xp(rally_path: str) -> XP:
     # Find XP name in the `rally_path`
     RE_XP = r'(?:mariadb|cockroachdb)-[a-zA-Z0-9\-]+'
     # Find XP params in the `rally_path` (e.g., cluster size, latency, ...)
-    RE_XP_PARAMS = r'(?P<db>[a-z]+)-(?P<cluster_size>[0-9]+)-(?P<latency>[0-9]+).*'
+    RE_XP_PARAMS = r'(?P<db>[a-z]+)-(?P<cluster_size>[0-9]+)-(?P<latency>[0-9]+)-(?P<burst>[TF]).*'
     # Json path to the rally scenario's name
     JPATH_SCN = '$.tasks.subtasks[0].title[0]'
     # Json path to the success rate
@@ -469,6 +487,7 @@ def make_xp(rally_path: str) -> XP:
             cluster_size = int(xp_info.get('cluster_size')),
             latency = int(xp_info.get('latency')),
             success = next(rally_values.execute(JPATH_SUCCESS)),
+            burst = True if xp_info.get('burst') is 'T' else False,
             dataframe = dataframe_per_operations(rally_values)
         )
 #+END_SRC
@@ -530,48 +549,48 @@ xp2orgtable(CRDB_XPS)
 #+NAME: tab:crdb_xps
 #+ATTR_HTML: :class table-striped
 #+RESULTS: lst:crdb_xps_org
-| #Cluster | RTT (ms) | Keystone Scenario                    | Success | Filepath       |
-|----------+----------+--------------------------------------+---------+----------------|
-|        3 |      LAN | authenticate_user_and_validate_token |  100.0% | [[file:./grisou/cockroachdb-3-0/results/report-d0455e03-8714-4c2e-9569-dab5e1225b2e.json][...225b2e.json]] |
-|        3 |      LAN | create_add_and_list_user_roles       |   96.0% | [[file:./grisou/cockroachdb-3-0/results/report-357fd7fb-8e01-4ce7-88c8-78969d4f39e7.json][...4f39e7.json]] |
-|        3 |      LAN | create_and_list_tenants              |  100.0% | [[file:./grisou/cockroachdb-3-0/results/report-5eb23acd-c309-4236-bb46-083ae572625b.json][...72625b.json]] |
-|        3 |      LAN | create_and_list_users                |   95.0% | [[file:./grisou/cockroachdb-3-0/results/report-488b51c9-479c-457d-9af0-35d5ccec3ca5.json][...ec3ca5.json]] |
-|        3 |      LAN | create_and_update_user               |  100.0% | [[file:./grisou/cockroachdb-3-0/results/report-fb2eb9a3-ee05-4587-89e0-03d930f2c73a.json][...f2c73a.json]] |
-|        3 |      LAN | create_user_set_enabled_and_delete   |   99.0% | [[file:./grisou/cockroachdb-3-0/results/report-cfd4c225-ecf4-4a61-ab07-2d241b15d8ee.json][...15d8ee.json]] |
-|        3 |      LAN | create_user_update_password          |   99.0% | [[file:./grisou/cockroachdb-3-0/results/report-b5329c76-0332-4b20-be91-997713cee4c7.json][...cee4c7.json]] |
-|        3 |      LAN | get_entities                         |   98.0% | [[file:./grisou/cockroachdb-3-0/results/report-b201a310-1ed8-4c18-831d-f47b2dc0b820.json][...c0b820.json]] |
-|        3 |      100 | authenticate_user_and_validate_token |  100.0% | [[file:./grisou/cockroachdb-3-50/results/report-32b7ff81-6dcb-466d-92cc-55590e6dc440.json][...6dc440.json]] |
-|        3 |      100 | create_add_and_list_user_roles       |  100.0% | [[file:./grisou/cockroachdb-3-50/results/report-b50b1fb2-318e-43f0-8d86-66318fd1503d.json][...d1503d.json]] |
-|        3 |      100 | create_and_list_tenants              |  100.0% | [[file:./grisou/cockroachdb-3-50/results/report-4dfec354-9ea3-43a3-b244-d62d4d84e1aa.json][...84e1aa.json]] |
-|        3 |      100 | create_and_list_users                |   94.0% | [[file:./grisou/cockroachdb-3-50/results/report-01127b66-7174-4dd8-8fdb-4629de561368.json][...561368.json]] |
-|        3 |      100 | create_and_update_user               |  100.0% | [[file:./grisou/cockroachdb-3-50/results/report-e4cf981e-33d0-400b-b114-29c60bb44337.json][...b44337.json]] |
-|        3 |      100 | create_user_set_enabled_and_delete   |   99.0% | [[file:./grisou/cockroachdb-3-50/results/report-bffaa669-174d-4665-850c-989747e475aa.json][...e475aa.json]] |
-|        3 |      100 | create_user_update_password          |  100.0% | [[file:./grisou/cockroachdb-3-50/results/report-dffcae4e-8f1f-4116-9d40-c2e82cf38943.json][...f38943.json]] |
-|        3 |      100 | get_entities                         |  100.0% | [[file:./grisou/cockroachdb-3-50/results/report-019a25b5-7be0-4e4c-9a34-f7289d64f3c5.json][...64f3c5.json]] |
-|        3 |      300 | authenticate_user_and_validate_token |  100.0% | [[file:./grisou/cockroachdb-3-150/results/report-d1917e84-6dc9-4929-a5b9-006fc615de60.json][...15de60.json]] |
-|        3 |      300 | create_add_and_list_user_roles       |   96.0% | [[file:./grisou/cockroachdb-3-150/results/report-5dc24a65-edb1-4349-92f0-b8db39be8536.json][...be8536.json]] |
-|        3 |      300 | create_and_list_tenants              |  100.0% | [[file:./grisou/cockroachdb-3-150/results/report-39f82b21-9f00-4bff-982e-7a13ab3335e0.json][...3335e0.json]] |
-|        3 |      300 | create_and_list_users                |   97.0% | [[file:./grisou/cockroachdb-3-150/results/report-cc49b2b8-2780-4eb6-a638-7dfdd1504641.json][...504641.json]] |
-|        3 |      300 | create_and_update_user               |  100.0% | [[file:./grisou/cockroachdb-3-150/results/report-51383199-f210-42e0-a0f4-8d194e76e861.json][...76e861.json]] |
-|        3 |      300 | create_user_set_enabled_and_delete   |   79.8% | [[file:./grisou/cockroachdb-3-150/results/report-ce467e24-cd55-4708-8a43-f67ab5dbec61.json][...dbec61.json]] |
-|        3 |      300 | create_user_update_password          |   97.0% | [[file:./grisou/cockroachdb-3-150/results/report-a83343dd-8f1c-420f-a022-185bb2e849a4.json][...e849a4.json]] |
-|        3 |      300 | get_entities                         |   96.0% | [[file:./grisou/cockroachdb-3-150/results/report-ad876f2e-789d-4909-a0a4-e88aed2fe99e.json][...2fe99e.json]] |
-|       25 |      LAN | authenticate_user_and_validate_token |  100.0% | [[file:./grisou/cockroachdb-25-0/results/report-c0a221de-22ee-4dc3-b190-7fd6a52fdb97.json][...2fdb97.json]] |
-|       25 |      LAN | create_add_and_list_user_roles       |   99.0% | [[file:./grisou/cockroachdb-25-0/results/report-fc0dbdcf-4dc6-477d-ad18-346af2031e21.json][...031e21.json]] |
-|       25 |      LAN | create_and_list_tenants              |  100.0% | [[file:./grisou/cockroachdb-25-0/results/report-a76cf446-f362-4753-befd-181d310286e3.json][...0286e3.json]] |
-|       25 |      LAN | create_and_list_users                |   91.0% | [[file:./grisou/cockroachdb-25-0/results/report-fff843a4-0dc4-448d-9321-9025c3541774.json][...541774.json]] |
-|       25 |      LAN | create_and_update_user               |  100.0% | [[file:./grisou/cockroachdb-25-0/results/report-7ebc3c2b-5cfa-4c3d-bfca-a7c9e8ea24eb.json][...ea24eb.json]] |
-|       25 |      LAN | create_user_set_enabled_and_delete   |   92.4% | [[file:./grisou/cockroachdb-25-0/results/report-ad89dda2-2be3-4496-9237-c8ef0524ded0.json][...24ded0.json]] |
-|       25 |      LAN | create_user_update_password          |  100.0% | [[file:./grisou/cockroachdb-25-0/results/report-d8e1e880-aab2-4148-9e71-15af3c600cbb.json][...600cbb.json]] |
-|       25 |      LAN | get_entities                         |   97.0% | [[file:./grisou/cockroachdb-25-0/results/report-0398aabd-8579-4419-9843-376e3bbde6ad.json][...bde6ad.json]] |
-|       25 |      300 | authenticate_user_and_validate_token |  100.0% | [[file:./grisou/cockroachdb-25-150/results/report-d39535f1-ea71-4fef-9a10-6f11a4eb818e.json][...eb818e.json]] |
-|       25 |      300 | create_add_and_list_user_roles       |   97.0% | [[file:./grisou/cockroachdb-25-150/results/report-1959fb6c-e269-40a9-b8ea-cc5401b74c9a.json][...b74c9a.json]] |
-|       25 |      300 | create_and_list_tenants              |  100.0% | [[file:./grisou/cockroachdb-25-150/results/report-f69edbad-114c-4e2c-85a2-9172a611cae1.json][...11cae1.json]] |
-|       25 |      300 | create_and_list_users                |   97.0% | [[file:./grisou/cockroachdb-25-150/results/report-68406eac-02ba-4885-9028-1f2ea48ff1ff.json][...8ff1ff.json]] |
-|       25 |      300 | create_and_update_user               |  100.0% | [[file:./grisou/cockroachdb-25-150/results/report-541f6a93-6b93-4c4a-bb38-c094bbc0d667.json][...c0d667.json]] |
-|       25 |      300 | create_user_set_enabled_and_delete   |   82.0% | [[file:./grisou/cockroachdb-25-150/results/report-fbd9ca2d-b6e0-4f9b-a2bc-72fde8b8c53d.json][...b8c53d.json]] |
-|       25 |      300 | create_user_update_password          |   96.0% | [[file:./grisou/cockroachdb-25-150/results/report-ebd08a83-8198-408b-8d51-d8fc21887ca9.json][...887ca9.json]] |
-|       25 |      300 | get_entities                         |   94.0% | [[file:./grisou/cockroachdb-25-150/results/report-8db15adc-72d4-44e8-9185-7e7a4960becd.json][...60becd.json]] |
+| #Cluster | RTT (ms) | Keystone Scenario                    | Burst | Success | Filepath       |
+|----------+----------+--------------------------------------+-------+---------+----------------|
+|        3 |      LAN | authenticate_user_and_validate_token | False |  100.0% | [[file:./grisou/cockroachdb-3-0-F/results/report-d0455e03-8714-4c2e-9569-dab5e1225b2e.json][...225b2e.json]] |
+|        3 |      LAN | create_add_and_list_user_roles       | False |   96.0% | [[file:./grisou/cockroachdb-3-0-F/results/report-357fd7fb-8e01-4ce7-88c8-78969d4f39e7.json][...4f39e7.json]] |
+|        3 |      LAN | create_and_list_tenants              | False |  100.0% | [[file:./grisou/cockroachdb-3-0-F/results/report-5eb23acd-c309-4236-bb46-083ae572625b.json][...72625b.json]] |
+|        3 |      LAN | create_and_list_users                | False |   95.0% | [[file:./grisou/cockroachdb-3-0-F/results/report-488b51c9-479c-457d-9af0-35d5ccec3ca5.json][...ec3ca5.json]] |
+|        3 |      LAN | create_and_update_user               | False |  100.0% | [[file:./grisou/cockroachdb-3-0-F/results/report-fb2eb9a3-ee05-4587-89e0-03d930f2c73a.json][...f2c73a.json]] |
+|        3 |      LAN | create_user_set_enabled_and_delete   | False |   99.0% | [[file:./grisou/cockroachdb-3-0-F/results/report-cfd4c225-ecf4-4a61-ab07-2d241b15d8ee.json][...15d8ee.json]] |
+|        3 |      LAN | create_user_update_password          | False |   99.0% | [[file:./grisou/cockroachdb-3-0-F/results/report-b5329c76-0332-4b20-be91-997713cee4c7.json][...cee4c7.json]] |
+|        3 |      LAN | get_entities                         | False |   98.0% | [[file:./grisou/cockroachdb-3-0-F/results/report-b201a310-1ed8-4c18-831d-f47b2dc0b820.json][...c0b820.json]] |
+|        3 |      100 | authenticate_user_and_validate_token | False |  100.0% | [[file:./grisou/cockroachdb-3-50-F/results/report-32b7ff81-6dcb-466d-92cc-55590e6dc440.json][...6dc440.json]] |
+|        3 |      100 | create_add_and_list_user_roles       | False |  100.0% | [[file:./grisou/cockroachdb-3-50-F/results/report-b50b1fb2-318e-43f0-8d86-66318fd1503d.json][...d1503d.json]] |
+|        3 |      100 | create_and_list_tenants              | False |  100.0% | [[file:./grisou/cockroachdb-3-50-F/results/report-4dfec354-9ea3-43a3-b244-d62d4d84e1aa.json][...84e1aa.json]] |
+|        3 |      100 | create_and_list_users                | False |   94.0% | [[file:./grisou/cockroachdb-3-50-F/results/report-01127b66-7174-4dd8-8fdb-4629de561368.json][...561368.json]] |
+|        3 |      100 | create_and_update_user               | False |  100.0% | [[file:./grisou/cockroachdb-3-50-F/results/report-e4cf981e-33d0-400b-b114-29c60bb44337.json][...b44337.json]] |
+|        3 |      100 | create_user_set_enabled_and_delete   | False |   99.0% | [[file:./grisou/cockroachdb-3-50-F/results/report-bffaa669-174d-4665-850c-989747e475aa.json][...e475aa.json]] |
+|        3 |      100 | create_user_update_password          | False |  100.0% | [[file:./grisou/cockroachdb-3-50-F/results/report-dffcae4e-8f1f-4116-9d40-c2e82cf38943.json][...f38943.json]] |
+|        3 |      100 | get_entities                         | False |  100.0% | [[file:./grisou/cockroachdb-3-50-F/results/report-019a25b5-7be0-4e4c-9a34-f7289d64f3c5.json][...64f3c5.json]] |
+|        3 |      300 | authenticate_user_and_validate_token | False |  100.0% | [[file:./grisou/cockroachdb-3-150-F/results/report-d1917e84-6dc9-4929-a5b9-006fc615de60.json][...15de60.json]] |
+|        3 |      300 | create_add_and_list_user_roles       | False |   96.0% | [[file:./grisou/cockroachdb-3-150-F/results/report-5dc24a65-edb1-4349-92f0-b8db39be8536.json][...be8536.json]] |
+|        3 |      300 | create_and_list_tenants              | False |  100.0% | [[file:./grisou/cockroachdb-3-150-F/results/report-39f82b21-9f00-4bff-982e-7a13ab3335e0.json][...3335e0.json]] |
+|        3 |      300 | create_and_list_users                | False |   97.0% | [[file:./grisou/cockroachdb-3-150-F/results/report-cc49b2b8-2780-4eb6-a638-7dfdd1504641.json][...504641.json]] |
+|        3 |      300 | create_and_update_user               | False |  100.0% | [[file:./grisou/cockroachdb-3-150-F/results/report-51383199-f210-42e0-a0f4-8d194e76e861.json][...76e861.json]] |
+|        3 |      300 | create_user_set_enabled_and_delete   | False |   79.8% | [[file:./grisou/cockroachdb-3-150-F/results/report-ce467e24-cd55-4708-8a43-f67ab5dbec61.json][...dbec61.json]] |
+|        3 |      300 | create_user_update_password          | False |   97.0% | [[file:./grisou/cockroachdb-3-150-F/results/report-a83343dd-8f1c-420f-a022-185bb2e849a4.json][...e849a4.json]] |
+|        3 |      300 | get_entities                         | False |   96.0% | [[file:./grisou/cockroachdb-3-150-F/results/report-ad876f2e-789d-4909-a0a4-e88aed2fe99e.json][...2fe99e.json]] |
+|       25 |      LAN | authenticate_user_and_validate_token | False |  100.0% | [[file:./grisou/cockroachdb-25-0-F/results/report-c0a221de-22ee-4dc3-b190-7fd6a52fdb97.json][...2fdb97.json]] |
+|       25 |      LAN | create_add_and_list_user_roles       | False |   99.0% | [[file:./grisou/cockroachdb-25-0-F/results/report-fc0dbdcf-4dc6-477d-ad18-346af2031e21.json][...031e21.json]] |
+|       25 |      LAN | create_and_list_tenants              | False |  100.0% | [[file:./grisou/cockroachdb-25-0-F/results/report-a76cf446-f362-4753-befd-181d310286e3.json][...0286e3.json]] |
+|       25 |      LAN | create_and_list_users                | False |   91.0% | [[file:./grisou/cockroachdb-25-0-F/results/report-fff843a4-0dc4-448d-9321-9025c3541774.json][...541774.json]] |
+|       25 |      LAN | create_and_update_user               | False |  100.0% | [[file:./grisou/cockroachdb-25-0-F/results/report-7ebc3c2b-5cfa-4c3d-bfca-a7c9e8ea24eb.json][...ea24eb.json]] |
+|       25 |      LAN | create_user_set_enabled_and_delete   | False |   92.4% | [[file:./grisou/cockroachdb-25-0-F/results/report-ad89dda2-2be3-4496-9237-c8ef0524ded0.json][...24ded0.json]] |
+|       25 |      LAN | create_user_update_password          | False |  100.0% | [[file:./grisou/cockroachdb-25-0-F/results/report-d8e1e880-aab2-4148-9e71-15af3c600cbb.json][...600cbb.json]] |
+|       25 |      LAN | get_entities                         | False |   97.0% | [[file:./grisou/cockroachdb-25-0-F/results/report-0398aabd-8579-4419-9843-376e3bbde6ad.json][...bde6ad.json]] |
+|       25 |      300 | authenticate_user_and_validate_token | False |  100.0% | [[file:./grisou/cockroachdb-25-150-F/results/report-d39535f1-ea71-4fef-9a10-6f11a4eb818e.json][...eb818e.json]] |
+|       25 |      300 | create_add_and_list_user_roles       | False |   97.0% | [[file:./grisou/cockroachdb-25-150-F/results/report-1959fb6c-e269-40a9-b8ea-cc5401b74c9a.json][...b74c9a.json]] |
+|       25 |      300 | create_and_list_tenants              | False |  100.0% | [[file:./grisou/cockroachdb-25-150-F/results/report-f69edbad-114c-4e2c-85a2-9172a611cae1.json][...11cae1.json]] |
+|       25 |      300 | create_and_list_users                | False |   97.0% | [[file:./grisou/cockroachdb-25-150-F/results/report-68406eac-02ba-4885-9028-1f2ea48ff1ff.json][...8ff1ff.json]] |
+|       25 |      300 | create_and_update_user               | False |  100.0% | [[file:./grisou/cockroachdb-25-150-F/results/report-541f6a93-6b93-4c4a-bb38-c094bbc0d667.json][...c0d667.json]] |
+|       25 |      300 | create_user_set_enabled_and_delete   | False |   82.0% | [[file:./grisou/cockroachdb-25-150-F/results/report-fbd9ca2d-b6e0-4f9b-a2bc-72fde8b8c53d.json][...b8c53d.json]] |
+|       25 |      300 | create_user_update_password          | False |   96.0% | [[file:./grisou/cockroachdb-25-150-F/results/report-ebd08a83-8198-408b-8d51-d8fc21887ca9.json][...887ca9.json]] |
+|       25 |      300 | get_entities                         | False |   94.0% | [[file:./grisou/cockroachdb-25-150-F/results/report-8db15adc-72d4-44e8-9185-7e7a4960becd.json][...60becd.json]] |
 
 *** Galera experiments
 Listing [[lst:galera_xps]] shows how to compute the list of experiments
@@ -596,56 +615,56 @@ xp2orgtable(GALERA_XPS)
 #+NAME: tab:galera_xps
 #+ATTR_HTML: :class table-striped
 #+RESULTS: lst:galera_xps_org
-| #Cluster | RTT (ms) | Keystone Scenario                    | Success | Filepath       |
-|----------+----------+--------------------------------------+---------+----------------|
-|        3 |      LAN | authenticate_user_and_validate_token |  100.0% | [[file:./grisou/mariadb-3-0/results/report-fe5c3758-c440-49bb-8d0c-cd7f7073b298.json][...73b298.json]] |
-|        3 |      LAN | create_add_and_list_user_roles       |  100.0% | [[file:./grisou/mariadb-3-0/results/report-1719f1e1-6f3a-4c79-a827-1c25372718b5.json][...2718b5.json]] |
-|        3 |      LAN | create_and_list_tenants              |  100.0% | [[file:./grisou/mariadb-3-0/results/report-78bd26a6-2418-4799-a0c9-dfc9995efb41.json][...5efb41.json]] |
-|        3 |      LAN | create_and_list_users                |  100.0% | [[file:./grisou/mariadb-3-0/results/report-7116626f-8797-407d-aa2d-39f0ef178f4a.json][...178f4a.json]] |
-|        3 |      LAN | create_and_update_user               |  100.0% | [[file:./grisou/mariadb-3-0/results/report-59d7bac5-1e01-4d29-8a7e-7f0eb7997f39.json][...997f39.json]] |
-|        3 |      LAN | create_user_set_enabled_and_delete   |  100.0% | [[file:./grisou/mariadb-3-0/results/report-34c0aaa5-26a7-4e7b-b61e-2750ba4a8131.json][...4a8131.json]] |
-|        3 |      LAN | create_user_update_password          |  100.0% | [[file:./grisou/mariadb-3-0/results/report-0fa53954-d8f3-4c06-b254-f6f7047cea65.json][...7cea65.json]] |
-|        3 |      LAN | get_entities                         |  100.0% | [[file:./grisou/mariadb-3-0/results/report-1d2cd67c-a3e5-469c-89b3-47fa3c465217.json][...465217.json]] |
-|        3 |      100 | authenticate_user_and_validate_token |  100.0% | [[file:./grisou/mariadb-3-50/results/report-19932a7c-bd6c-4418-8fe1-18cf8f1e934a.json][...1e934a.json]] |
-|        3 |      100 | create_add_and_list_user_roles       |  100.0% | [[file:./grisou/mariadb-3-50/results/report-fdd7be47-fe64-4616-b792-478bce20b8c2.json][...20b8c2.json]] |
-|        3 |      100 | create_and_list_tenants              |  100.0% | [[file:./grisou/mariadb-3-50/results/report-d507c1b6-fd78-452c-a759-1f2ae9af8c22.json][...af8c22.json]] |
-|        3 |      100 | create_and_list_users                |  100.0% | [[file:./grisou/mariadb-3-50/results/report-5c4f301d-fe06-49fb-9cfc-644faf01b6af.json][...01b6af.json]] |
-|        3 |      100 | create_and_update_user               |  100.0% | [[file:./grisou/mariadb-3-50/results/report-2a1ad2c7-01e4-4066-a64d-9fb805eab05c.json][...eab05c.json]] |
-|        3 |      100 | create_user_set_enabled_and_delete   |  100.0% | [[file:./grisou/mariadb-3-50/results/report-837b1310-4961-4a4d-95fb-c1868ab6fe59.json][...b6fe59.json]] |
-|        3 |      100 | create_user_update_password          |  100.0% | [[file:./grisou/mariadb-3-50/results/report-834d93b4-5be2-4997-8835-e8c3a8cb46cc.json][...cb46cc.json]] |
-|        3 |      100 | get_entities                         |  100.0% | [[file:./grisou/mariadb-3-50/results/report-64e6aac0-8186-4088-8713-86c193199273.json][...199273.json]] |
-|        3 |      300 | authenticate_user_and_validate_token |  100.0% | [[file:./grisou/mariadb-3-150/results/report-429cc652-c578-4040-85f8-bd6702e00977.json][...e00977.json]] |
-|        3 |      300 | create_add_and_list_user_roles       |  100.0% | [[file:./grisou/mariadb-3-150/results/report-eab2e052-f59d-4d87-906c-1632f7d1f360.json][...d1f360.json]] |
-|        3 |      300 | create_and_list_tenants              |  100.0% | [[file:./grisou/mariadb-3-150/results/report-4577fc71-f616-4286-9c03-29378b452df4.json][...452df4.json]] |
-|        3 |      300 | create_and_list_users                |  100.0% | [[file:./grisou/mariadb-3-150/results/report-9e7c7a52-f394-42e8-aff2-0df2963d9b47.json][...3d9b47.json]] |
-|        3 |      300 | create_and_update_user               |  100.0% | [[file:./grisou/mariadb-3-150/results/report-fc34136e-457f-4754-bb57-abb6f5397f5a.json][...397f5a.json]] |
-|        3 |      300 | create_user_set_enabled_and_delete   |  100.0% | [[file:./grisou/mariadb-3-150/results/report-391e300c-64b5-482a-8538-7086099da618.json][...9da618.json]] |
-|        3 |      300 | create_user_update_password          |  100.0% | [[file:./grisou/mariadb-3-150/results/report-d75f9204-0e21-4675-99b0-9c9e17986cf0.json][...986cf0.json]] |
-|        3 |      300 | get_entities                         |  100.0% | [[file:./grisou/mariadb-3-150/results/report-c5ceab07-429a-4ed2-af32-1d453143e1b9.json][...43e1b9.json]] |
-|       25 |      LAN | authenticate_user_and_validate_token |  100.0% | [[file:./grisou/mariadb-25-0/results/report-d7376cc9-0ac9-479b-bca0-748c4a93d08b.json][...93d08b.json]] |
-|       25 |      LAN | create_add_and_list_user_roles       |  100.0% | [[file:./grisou/mariadb-25-0/results/report-69e1095a-db00-498d-9f7c-fac301719a17.json][...719a17.json]] |
-|       25 |      LAN | create_and_list_tenants              |  100.0% | [[file:./grisou/mariadb-25-0/results/report-4fcf2ed3-0b89-4836-bb04-0185c63c712d.json][...3c712d.json]] |
-|       25 |      LAN | create_and_list_users                |  100.0% | [[file:./grisou/mariadb-25-0/results/report-1bf0cd94-7d12-431c-831e-f4463dd006f6.json][...d006f6.json]] |
-|       25 |      LAN | create_and_update_user               |  100.0% | [[file:./grisou/mariadb-25-0/results/report-062db9a1-ac97-4bc6-be8e-fe5ce073b0fd.json][...73b0fd.json]] |
-|       25 |      LAN | create_user_set_enabled_and_delete   |  100.0% | [[file:./grisou/mariadb-25-0/results/report-da750659-6785-407b-80da-384731ed5d6a.json][...ed5d6a.json]] |
-|       25 |      LAN | create_user_update_password          |  100.0% | [[file:./grisou/mariadb-25-0/results/report-7a5f9ca5-0cdf-4d33-bd19-b27330e30860.json][...e30860.json]] |
-|       25 |      LAN | get_entities                         |  100.0% | [[file:./grisou/mariadb-25-0/results/report-869bdf1c-a55a-40c2-b3fb-2d6edf95d4c9.json][...95d4c9.json]] |
-|       25 |      100 | authenticate_user_and_validate_token |  100.0% | [[file:./grisou/mariadb-25-50/results/report-679149d4-6d6a-4f4c-8ba8-8b15edce22f3.json][...ce22f3.json]] |
-|       25 |      100 | create_add_and_list_user_roles       |  100.0% | [[file:./grisou/mariadb-25-50/results/report-f9c0f2bc-8b7f-4be7-8424-78ca68dacef7.json][...dacef7.json]] |
-|       25 |      100 | create_and_list_tenants              |  100.0% | [[file:./grisou/mariadb-25-50/results/report-d6b5d871-5944-4959-9116-3702f9d3e97d.json][...d3e97d.json]] |
-|       25 |      100 | create_and_list_users                |  100.0% | [[file:./grisou/mariadb-25-50/results/report-16b0e847-4963-4c38-a11d-16737340141c.json][...40141c.json]] |
-|       25 |      100 | create_and_update_user               |  100.0% | [[file:./grisou/mariadb-25-50/results/report-0c838c85-c81c-4e02-a6d8-c236dc361add.json][...361add.json]] |
-|       25 |      100 | create_user_set_enabled_and_delete   |  100.0% | [[file:./grisou/mariadb-25-50/results/report-44204b98-5a47-40f4-9ecc-e55fd70be46a.json][...0be46a.json]] |
-|       25 |      100 | create_user_update_password          |  100.0% | [[file:./grisou/mariadb-25-50/results/report-4ee4014a-570b-4550-8713-010494d10542.json][...d10542.json]] |
-|       25 |      100 | get_entities                         |  100.0% | [[file:./grisou/mariadb-25-50/results/report-83d49662-fc8a-4fa3-8f4b-c22a31b122c3.json][...b122c3.json]] |
-|       25 |      300 | authenticate_user_and_validate_token |  100.0% | [[file:./grisou/mariadb-25-150/results/report-bfe3e125-c125-4966-aa44-53b71affcf58.json][...ffcf58.json]] |
-|       25 |      300 | create_add_and_list_user_roles       |  100.0% | [[file:./grisou/mariadb-25-150/results/report-4cf2a828-0a0e-4673-bc74-7dce993ee24d.json][...3ee24d.json]] |
-|       25 |      300 | create_and_list_tenants              |  100.0% | [[file:./grisou/mariadb-25-150/results/report-856915fc-8f13-4f1b-aaf2-1a0863ac5435.json][...ac5435.json]] |
-|       25 |      300 | create_and_list_users                |  100.0% | [[file:./grisou/mariadb-25-150/results/report-da7e7848-b97b-41f0-a7ac-eb05cdbdd225.json][...bdd225.json]] |
-|       25 |      300 | create_and_update_user               |  100.0% | [[file:./grisou/mariadb-25-150/results/report-0a39f2ca-868d-4c84-8c5f-2e37d931690f.json][...31690f.json]] |
-|       25 |      300 | create_user_set_enabled_and_delete   |  100.0% | [[file:./grisou/mariadb-25-150/results/report-0819f90a-ef13-4d9b-93de-908cbf53dd62.json][...53dd62.json]] |
-|       25 |      300 | create_user_update_password          |  100.0% | [[file:./grisou/mariadb-25-150/results/report-03bcc0d4-32b9-4035-9d90-a10240544314.json][...544314.json]] |
-|       25 |      300 | get_entities                         |  100.0% | [[file:./grisou/mariadb-25-150/results/report-fe4f446c-4f9d-4f2b-97de-e663b7c1fc24.json][...c1fc24.json]] |
+| #Cluster | RTT (ms) | Keystone Scenario                    | Burst | Success | Filepath       |
+|----------+----------+--------------------------------------+-------+---------+----------------|
+|        3 |      LAN | authenticate_user_and_validate_token | False |  100.0% | [[file:./grisou/mariadb-3-0-F/results/report-fe5c3758-c440-49bb-8d0c-cd7f7073b298.json][...73b298.json]] |
+|        3 |      LAN | create_add_and_list_user_roles       | False |  100.0% | [[file:./grisou/mariadb-3-0-F/results/report-1719f1e1-6f3a-4c79-a827-1c25372718b5.json][...2718b5.json]] |
+|        3 |      LAN | create_and_list_tenants              | False |  100.0% | [[file:./grisou/mariadb-3-0-F/results/report-78bd26a6-2418-4799-a0c9-dfc9995efb41.json][...5efb41.json]] |
+|        3 |      LAN | create_and_list_users                | False |  100.0% | [[file:./grisou/mariadb-3-0-F/results/report-7116626f-8797-407d-aa2d-39f0ef178f4a.json][...178f4a.json]] |
+|        3 |      LAN | create_and_update_user               | False |  100.0% | [[file:./grisou/mariadb-3-0-F/results/report-59d7bac5-1e01-4d29-8a7e-7f0eb7997f39.json][...997f39.json]] |
+|        3 |      LAN | create_user_set_enabled_and_delete   | False |  100.0% | [[file:./grisou/mariadb-3-0-F/results/report-34c0aaa5-26a7-4e7b-b61e-2750ba4a8131.json][...4a8131.json]] |
+|        3 |      LAN | create_user_update_password          | False |  100.0% | [[file:./grisou/mariadb-3-0-F/results/report-0fa53954-d8f3-4c06-b254-f6f7047cea65.json][...7cea65.json]] |
+|        3 |      LAN | get_entities                         | False |  100.0% | [[file:./grisou/mariadb-3-0-F/results/report-1d2cd67c-a3e5-469c-89b3-47fa3c465217.json][...465217.json]] |
+|        3 |      100 | authenticate_user_and_validate_token | False |  100.0% | [[file:./grisou/mariadb-3-50-F/results/report-19932a7c-bd6c-4418-8fe1-18cf8f1e934a.json][...1e934a.json]] |
+|        3 |      100 | create_add_and_list_user_roles       | False |  100.0% | [[file:./grisou/mariadb-3-50-F/results/report-fdd7be47-fe64-4616-b792-478bce20b8c2.json][...20b8c2.json]] |
+|        3 |      100 | create_and_list_tenants              | False |  100.0% | [[file:./grisou/mariadb-3-50-F/results/report-d507c1b6-fd78-452c-a759-1f2ae9af8c22.json][...af8c22.json]] |
+|        3 |      100 | create_and_list_users                | False |  100.0% | [[file:./grisou/mariadb-3-50-F/results/report-5c4f301d-fe06-49fb-9cfc-644faf01b6af.json][...01b6af.json]] |
+|        3 |      100 | create_and_update_user               | False |  100.0% | [[file:./grisou/mariadb-3-50-F/results/report-2a1ad2c7-01e4-4066-a64d-9fb805eab05c.json][...eab05c.json]] |
+|        3 |      100 | create_user_set_enabled_and_delete   | False |  100.0% | [[file:./grisou/mariadb-3-50-F/results/report-837b1310-4961-4a4d-95fb-c1868ab6fe59.json][...b6fe59.json]] |
+|        3 |      100 | create_user_update_password          | False |  100.0% | [[file:./grisou/mariadb-3-50-F/results/report-834d93b4-5be2-4997-8835-e8c3a8cb46cc.json][...cb46cc.json]] |
+|        3 |      100 | get_entities                         | False |  100.0% | [[file:./grisou/mariadb-3-50-F/results/report-64e6aac0-8186-4088-8713-86c193199273.json][...199273.json]] |
+|        3 |      300 | authenticate_user_and_validate_token | False |  100.0% | [[file:./grisou/mariadb-3-150-F/results/report-429cc652-c578-4040-85f8-bd6702e00977.json][...e00977.json]] |
+|        3 |      300 | create_add_and_list_user_roles       | False |  100.0% | [[file:./grisou/mariadb-3-150-F/results/report-eab2e052-f59d-4d87-906c-1632f7d1f360.json][...d1f360.json]] |
+|        3 |      300 | create_and_list_tenants              | False |  100.0% | [[file:./grisou/mariadb-3-150-F/results/report-4577fc71-f616-4286-9c03-29378b452df4.json][...452df4.json]] |
+|        3 |      300 | create_and_list_users                | False |  100.0% | [[file:./grisou/mariadb-3-150-F/results/report-9e7c7a52-f394-42e8-aff2-0df2963d9b47.json][...3d9b47.json]] |
+|        3 |      300 | create_and_update_user               | False |  100.0% | [[file:./grisou/mariadb-3-150-F/results/report-fc34136e-457f-4754-bb57-abb6f5397f5a.json][...397f5a.json]] |
+|        3 |      300 | create_user_set_enabled_and_delete   | False |  100.0% | [[file:./grisou/mariadb-3-150-F/results/report-391e300c-64b5-482a-8538-7086099da618.json][...9da618.json]] |
+|        3 |      300 | create_user_update_password          | False |  100.0% | [[file:./grisou/mariadb-3-150-F/results/report-d75f9204-0e21-4675-99b0-9c9e17986cf0.json][...986cf0.json]] |
+|        3 |      300 | get_entities                         | False |  100.0% | [[file:./grisou/mariadb-3-150-F/results/report-c5ceab07-429a-4ed2-af32-1d453143e1b9.json][...43e1b9.json]] |
+|       25 |      LAN | authenticate_user_and_validate_token | False |  100.0% | [[file:./grisou/mariadb-25-0-F/results/report-d7376cc9-0ac9-479b-bca0-748c4a93d08b.json][...93d08b.json]] |
+|       25 |      LAN | create_add_and_list_user_roles       | False |  100.0% | [[file:./grisou/mariadb-25-0-F/results/report-69e1095a-db00-498d-9f7c-fac301719a17.json][...719a17.json]] |
+|       25 |      LAN | create_and_list_tenants              | False |  100.0% | [[file:./grisou/mariadb-25-0-F/results/report-4fcf2ed3-0b89-4836-bb04-0185c63c712d.json][...3c712d.json]] |
+|       25 |      LAN | create_and_list_users                | False |  100.0% | [[file:./grisou/mariadb-25-0-F/results/report-1bf0cd94-7d12-431c-831e-f4463dd006f6.json][...d006f6.json]] |
+|       25 |      LAN | create_and_update_user               | False |  100.0% | [[file:./grisou/mariadb-25-0-F/results/report-062db9a1-ac97-4bc6-be8e-fe5ce073b0fd.json][...73b0fd.json]] |
+|       25 |      LAN | create_user_set_enabled_and_delete   | False |  100.0% | [[file:./grisou/mariadb-25-0-F/results/report-da750659-6785-407b-80da-384731ed5d6a.json][...ed5d6a.json]] |
+|       25 |      LAN | create_user_update_password          | False |  100.0% | [[file:./grisou/mariadb-25-0-F/results/report-7a5f9ca5-0cdf-4d33-bd19-b27330e30860.json][...e30860.json]] |
+|       25 |      LAN | get_entities                         | False |  100.0% | [[file:./grisou/mariadb-25-0-F/results/report-869bdf1c-a55a-40c2-b3fb-2d6edf95d4c9.json][...95d4c9.json]] |
+|       25 |      100 | authenticate_user_and_validate_token | False |  100.0% | [[file:./grisou/mariadb-25-50-F/results/report-679149d4-6d6a-4f4c-8ba8-8b15edce22f3.json][...ce22f3.json]] |
+|       25 |      100 | create_add_and_list_user_roles       | False |  100.0% | [[file:./grisou/mariadb-25-50-F/results/report-f9c0f2bc-8b7f-4be7-8424-78ca68dacef7.json][...dacef7.json]] |
+|       25 |      100 | create_and_list_tenants              | False |  100.0% | [[file:./grisou/mariadb-25-50-F/results/report-d6b5d871-5944-4959-9116-3702f9d3e97d.json][...d3e97d.json]] |
+|       25 |      100 | create_and_list_users                | False |  100.0% | [[file:./grisou/mariadb-25-50-F/results/report-16b0e847-4963-4c38-a11d-16737340141c.json][...40141c.json]] |
+|       25 |      100 | create_and_update_user               | False |  100.0% | [[file:./grisou/mariadb-25-50-F/results/report-0c838c85-c81c-4e02-a6d8-c236dc361add.json][...361add.json]] |
+|       25 |      100 | create_user_set_enabled_and_delete   | False |  100.0% | [[file:./grisou/mariadb-25-50-F/results/report-44204b98-5a47-40f4-9ecc-e55fd70be46a.json][...0be46a.json]] |
+|       25 |      100 | create_user_update_password          | False |  100.0% | [[file:./grisou/mariadb-25-50-F/results/report-4ee4014a-570b-4550-8713-010494d10542.json][...d10542.json]] |
+|       25 |      100 | get_entities                         | False |  100.0% | [[file:./grisou/mariadb-25-50-F/results/report-83d49662-fc8a-4fa3-8f4b-c22a31b122c3.json][...b122c3.json]] |
+|       25 |      300 | authenticate_user_and_validate_token | False |  100.0% | [[file:./grisou/mariadb-25-150-F/results/report-bfe3e125-c125-4966-aa44-53b71affcf58.json][...ffcf58.json]] |
+|       25 |      300 | create_add_and_list_user_roles       | False |  100.0% | [[file:./grisou/mariadb-25-150-F/results/report-4cf2a828-0a0e-4673-bc74-7dce993ee24d.json][...3ee24d.json]] |
+|       25 |      300 | create_and_list_tenants              | False |  100.0% | [[file:./grisou/mariadb-25-150-F/results/report-856915fc-8f13-4f1b-aaf2-1a0863ac5435.json][...ac5435.json]] |
+|       25 |      300 | create_and_list_users                | False |  100.0% | [[file:./grisou/mariadb-25-150-F/results/report-da7e7848-b97b-41f0-a7ac-eb05cdbdd225.json][...bdd225.json]] |
+|       25 |      300 | create_and_update_user               | False |  100.0% | [[file:./grisou/mariadb-25-150-F/results/report-0a39f2ca-868d-4c84-8c5f-2e37d931690f.json][...31690f.json]] |
+|       25 |      300 | create_user_set_enabled_and_delete   | False |  100.0% | [[file:./grisou/mariadb-25-150-F/results/report-0819f90a-ef13-4d9b-93de-908cbf53dd62.json][...53dd62.json]] |
+|       25 |      300 | create_user_update_password          | False |  100.0% | [[file:./grisou/mariadb-25-150-F/results/report-03bcc0d4-32b9-4035-9d90-a10240544314.json][...544314.json]] |
+|       25 |      300 | get_entities                         | False |  100.0% | [[file:./grisou/mariadb-25-150-F/results/report-fe4f446c-4f9d-4f2b-97de-e663b7c1fc24.json][...c1fc24.json]] |
 
 ** Query Rally Results
 The Rally Json file contains values that give the scenario completion
@@ -814,6 +833,7 @@ def reify_in_xpdf(attr: str) -> Callable[[XP], XP]:
                   cluster_size=xp.cluster_size,
                   latency=xp.latency,
                   success=xp.success,
+                  burst=xp.burst,
                   dataframe=new_df)
     # Curry
     def _push(xp: XP) -> XP:
