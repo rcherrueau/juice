@@ -243,17 +243,23 @@ Benchmark the Openstack
 
 @doc(tc)
 @enostask()
-def emulate(tc=tc, env=None, **kwargs):
+def emulate(tc=tc, reset=False, env=None, **kwargs):
     """
-usage: juice emulate
+usage: juice emulate [--reset]
 
 Emulate network using: {0}
     """
     inventory = env["inventory"]
     roles = env["roles"]
-    logging.info("Emulates using constraints: %s" % tc)
-    emulate_network(roles, inventory, tc)
-    env["latency"] = tc['constraints'][0]['delay']
+
+    if not reset:
+        logging.info("Emulates using constraints: %s" % tc)
+        emulate_network(roles, inventory, tc)
+        env["latency"] = tc['constraints'][0]['delay']
+    else:
+        logging.info("Reset network constraints")
+        reset_network(roles, inventory)
+
     env["tasks_ran"].append('emulate')
 
 

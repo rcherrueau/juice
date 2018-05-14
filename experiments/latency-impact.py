@@ -91,28 +91,17 @@ SCENARIOS = [
 logging.basicConfig(level=logging.INFO)
 
 
-def init():
-  try:
-    j.g5k(config=CONF)
-    j.inventory()
-    j.destroy()
-    j.emulate(CONF['tc'])
-  except Exception as e:
-    logging.error(
-        "Setup goes wrong. This is not necessarily a bad news, "
-        "in particular, if it is the first time you run the "
-        "experiment: %s" % e)
-
-
 def teardown():
   try:
     j.destroy()
-    j.emulate(CONF['tc'])
+    j.emulate(reset=True)
   except Exception as e:
-    logging.warning(
-        "Setup went wrong. This is not necessarily a bad news, "
-        "in particular, if it is the first time you run the "
-        "experiment: %s" % e)
+    logging.warning("Setup went wrong with message: %s" % e)
+
+
+def init():
+    j.deploy(conf=CONF, xp_name=JOB_NAME)
+    teardown()
 
 
 def keystone_exp():
