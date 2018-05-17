@@ -20,6 +20,7 @@
 #+HTML_HEAD: <script src="https://code.jquery.com/jquery-3.3.1.slim.min.js" integrity="sha256-3edrmyuQ0w65f8gfBsqowzjJe2iM6n0nKciPUp8y+7E=" crossorigin="anonymous"></script>
 #+HTML_HEAD: <script type="text/javascript" charset="utf8" src="https://cdn.datatables.net/1.10.16/js/jquery.dataTables.js"></script>
 
+
 #+BEGIN_abstract
 OpenStack is the /de facto/ open source solution for the management of
 cloud infrastructures and emerging solution for edge infrastructures
@@ -40,68 +41,6 @@ MariaDB; And CockroachDB, a NewSQL system that leverage distributed
 consensus algorithms to scale.
 #+END_abstract
 
-* Experiments Params                                               :noexport:
-List of all parameters considered in this notebook.
-
-#+BEGIN_SRC python :results silent :exports none
-RDBMSS = [ 'mariadb', 'galera', 'cockroachdb' ]
-CSIZES = [ 3, 9, 45 ]
-DELAYS = [ 0, 50, 150 ]
-SCNS   = [
-      "KeystoneBasic.authenticate_user_and_validate_token"
-    , "KeystoneBasic.create_add_and_list_user_roles"
-    , "KeystoneBasic.create_and_list_tenants"
-    , "KeystoneBasic.get_entities"
-    , "KeystoneBasic.create_user_update_password"
-    , "KeystoneBasic.create_user_set_enabled_and_delete"
-    , "KeystoneBasic.create_and_list_users"
-]
-OPS   = {
-  "KeystoneBasic.authenticate_user_and_validate_token":
-  [
-    "keystone_v3.fetch_token",
-    "keystone_v3.validate_token",
-  ]
-  , "KeystoneBasic.create_add_and_list_user_roles":
-  [
-    "keystone_v3.create_role",
-    "keystone_v3.add_role",
-    "keystone_v3.list_roles",
-  ]
-  , "KeystoneBasic.create_and_list_tenants":
-  [
-    "keystone_v3.create_project",
-    "keystone_v3.list_projects",
-  ]
-  , "KeystoneBasic.get_entities":
-  [
-    "keystone_v3.create_project",
-    "keystone_v3.create_user",
-    "keystone_v3.create_role",
-    "keystone_v3.get_project",
-    "keystone_v3.get_user",
-    "keystone_v3.get_role",
-    "keystone_v3.list_services",
-    "keystone_v3.get_services",
-  ]
-  , "KeystoneBasic.create_user_update_password":
-  [
-    "keystone_v3.create_user",
-    "keystone_v3.update_user",
-  ]
-  , "KeystoneBasic.create_user_set_enabled_and_delete":
-  [
-    "keystone_v3.create_user",
-    "keystone_v3.update_user",
-    "keystone_v3.delete_user",
-  ]
-  , "KeystoneBasic.create_and_list_users":
-  [
-    "keystone_v3.create_user",
-    "keystone_v3.list_users",
-  ]
-}
-#+END_SRC
 
 * Prelude                                                          :noexport:
 #+BEGIN_SRC python :results silent
@@ -113,6 +52,7 @@ from typing import (Dict, Union, Iterator,
 T = TypeVar('T')
 U = TypeVar('U')
 
+from collections import OrderedDict
 import glob                  # Unix style pathname
 import itertools as itt
 from operator import *
@@ -136,7 +76,7 @@ from functional.util import compose # ^
 # -- Utils
 def normalize_series(scn: str, s: pd.Series) -> pd.Series:
     "Ensures that all operations of a scenario are present in `s`"
-    operations = OPS.get(scn)
+    operations = RALLY.get(scn)
     news = pd.Series()
     for op in operations:
         if op in s.index:
@@ -147,7 +87,7 @@ def normalize_series(scn: str, s: pd.Series) -> pd.Series:
 
 def make_series(scn: 'xp.scenario') -> pd.Series:
     "Builds a pd.Series with operations of `scn` in index"
-    return pd.Series(np.nan, index=OPS.get(scn))
+    return pd.Series(np.nan, index=RALLY.get(scn))
 
 def make_cumulative_frequency(s: pd.Series) -> pd.Series:
     "Performed a Cumulative Frequency Analysis"
@@ -165,6 +105,11 @@ def success_rate(rally_values) -> float:
         success = round(float(success_str[:-1]) / 100., 2)
         #
     return success
+
+def debug(t):
+    "Debug in a λ"
+    print(t)
+    return t
 
 def df2orgtable(df: pd.DataFrame, index_name="") -> List[List[str]]:
     """
@@ -342,23 +287,68 @@ Tack back HotEdge'18 Central vs MultiRegion deployments
 Description of databases, how they works, how they implements expected
 behaviors of the previous section
 
+#+NAME: lst:rdbms
+#+BEGIN_SRC python :results silent :exports none
+RDBMSS = [ 'mariadb', 'galera', 'cockroachdb' ]
+#+END_SRC
+
 ** MariaDB
 ** Galera in multi-master replication mode.
 ** CockroachDB (/abbr./ CRDB).
 * Considered OpenStack Services
 Keystone
 
-* Considered Rally Scenarios
+* Experiment Parameters
+This is the list of all parameters considered in this notebook.
+
+** Swarm size
+The swarm size (see, [[lst:swarm_size]]) defines the number of OpenStack
+instances deployed for an experiment. It varies between ~3~, ~9~ and
+~45~. A value of ~3~, means juice deploys OpenStack on three different
+nodes. The keystone rdbms backend is then centralized in one of the
+three nodes for MariaDB, or distributed on all the three nodes for
+Galera and CRDB (same for ~9~ and ~45~). All of theses values are a
+multiple of three, which is the default CRDB replication size. The
+value of ~45~ comes from the maximum number of nodes we have in the
+Nantes ecotype grid5000 cluster.
+
+#+CAPTION: Number of OpenStack Instances Deployed.
+#+NAME: lst:swarm_size
+#+BEGIN_SRC python :results silent
+CSIZES = [ 3, 9, 45 ]
+#+END_SRC
+
+** Delay
+The delay (see, [[lst:delays]]) defines the network latency between two
+OpenStack instances. It is expressed in terms of half the Round-Trip
+Times, (/i.e./, a value of ~50~ stands for 100 ms RTT , ~150~ is 300
+ms RTT). The ~0~ value stands for LAN speed which is approximately
+0.08 ms RTT on the ecotype grid5000 cluster (10 Gbps card).
+
+#+CAPTION: Network Latency Between Two OpenStack Instances.
+#+NAME: lst:delays
+#+BEGIN_SRC python :results silent
+DELAYS = [ 0, 50, 150 ]
+#+END_SRC
+
+Juice applies theses network latencies with netem ~tc~. Note that
+juice applies ~tc~ rules on network interfaces that are dedicated to
+the RDBMS communication. Thus, metrics collection and other network
+traffics are not limited.
+
+** Considered Rally scenarios
 [[https://rally.readthedocs.io/en/latest/][Rally]] is a testing benchmarking tool for OpenStack. Juice uses Rally
 to evaluate how OpenStack control plane behaves at scale. This section
-describes Rally scenarios that are considered in this experiment. The
+describes Rally scenarios that are considered in this notebook. The
 description includes the ratio of reads and writes performed on the
 database. For a transactional (OLTP) database, depending of the
 reads/writes ratio, it could be better to choose one replication
 strategy to another (i.e., replicate records on all of your nodes or
 not).
 
-** keystone/authenticate-user-and-validate-token
+*** TODO A typical Rally execution
+**** TODO Burst execution
+*** keystone/authenticate-user-and-validate-token
 Description: authenticate and validate a keystone token.
 
 Definition Code:
@@ -375,7 +365,7 @@ List of keystone functionalities:
 
 Number of runs: 20
 
-** keystone/create-add-and-list-user-roles
+*** keystone/create-add-and-list-user-roles
 Description: create user role, add it and list user roles for given
 user.
 
@@ -394,7 +384,7 @@ List of keystone functionalities:
 
 Number of runs: 100
 
-** keystone/create-and-list-tenants
+*** keystone/create-and-list-tenants
 Description: create a keystone tenant with random name and list all
 tenants.
 
@@ -412,7 +402,7 @@ List of keystone functionalities:
 
 Number of runs: 10
 
-** keystone/get-entities
+*** keystone/get-entities
 Description: get instance of a tenant, user, role and service by id's.
 An ephemeral tenant, user, and role are each created. By default,
 fetches the 'keystone' service.
@@ -439,7 +429,7 @@ Source Code:
 
 Number of runs: 100
 
-** keystone/create-and-list-users
+*** keystone/create-and-list-users
 Description: create a keystone user with random name and list all
 users.
 
@@ -457,7 +447,7 @@ Source Code:
 
 Number of runs: 100
 
-** keystone/create-user-set-enabled-and-delete
+*** keystone/create-user-set-enabled-and-delete
 Description: create a keystone user, enable or disable it, and delete
 it.
 
@@ -476,7 +466,7 @@ Source Code:
 
 Number of runs: 100
 
-** keystone/create-user-update-password
+*** keystone/create-user-update-password
 Description: create user and update password for that user.
 
 List of keystone functionalities:
@@ -493,7 +483,7 @@ Source Code:
 
 Number of runs: 100
 
-** A note about gauging the %reads/%writes ratio
+*** A note about gauging the %reads/%writes ratio
 The %reads/%writes ratio is computed on Mariadb. The gauging code
 reads values of status variables ~Com_xxx~ that provide statement
 counts over all connections (with ~xxx~ stands for ~SELECT~, ~DELETE~,
@@ -533,6 +523,77 @@ other inserts specified in the scenario definition (under the
 The Juice implementation for this gauging is available on GitHub at
 [[https://github.com/rcherrueau/juice/blob/02af922a7c3221462d7106dfb2751b3be709a4d5/experiments/read-write-ratio.py][experiments/read-write-ratio.py]].
 
+*** Python params                                                  :noexport:
+#+BEGIN_SRC python :results silent
+RALLY = OrderedDict([
+  ("KeystoneBasic.authenticate_user_and_validate_token",
+   ["keystone_v3.fetch_token", "keystone_v3.validate_token",]),
+  ("KeystoneBasic.create_add_and_list_user_roles",
+   ["keystone_v3.create_role", "keystone_v3.add_role",
+    "keystone_v3.list_roles",]),
+  ("KeystoneBasic.create_and_list_tenants",
+   ["keystone_v3.create_project", "keystone_v3.list_projects",]),
+  ("KeystoneBasic.get_entities",
+   ["keystone_v3.create_project",
+    "keystone_v3.create_user", "keystone_v3.create_role",
+    "keystone_v3.get_project", "keystone_v3.get_user",
+    "keystone_v3.get_role", "keystone_v3.list_services",
+    "keystone_v3.get_services",]),
+  ("KeystoneBasic.create_user_update_password",
+   ["keystone_v3.create_user", "keystone_v3.update_user",]),
+  ("KeystoneBasic.create_user_set_enabled_and_delete",
+   ["keystone_v3.create_user", "keystone_v3.update_user",
+    "keystone_v3.delete_user",]),
+  ("KeystoneBasic.create_and_list_users",
+   ["keystone_v3.create_user", "keystone_v3.list_users",])])
+#+END_SRC
+
+** Experiments Links                                             :nonoexport:
+*** MariaDB
+No Burst
+|     | 3 | 9 | 45 |
+|-----+---+---+----|
+|   0 | x | x | x  |
+|  50 |   | x |    |
+| 150 |   | x |    |
+
+Burst
+|     | 3 | 9 | 45 |
+|-----+---+---+----|
+|   0 | x | x |  x |
+|  50 |   | x |    |
+| 150 |   | x |    |
+
+*** Galera
+No Burst
+|     | 3 | 9 | 45 |
+|-----+---+---+----|
+|   0 | x | x | x  |
+|  50 |   | x |    |
+| 150 |   | x |    |
+
+Burst
+|     | 3 | 9 | 45 |
+|-----+---+---+----|
+|   0 | x | x |  x |
+|  50 |   | x |    |
+| 150 |   | x |    |
+
+*** CockroachDB
+No Burst
+|     | 3 | 9 | 45 |
+|-----+---+---+----|
+|   0 | x | x | x  |
+|  50 |   | x |    |
+| 150 |   | x |    |
+
+Burst
+|     | 3 | 9 | 45 |
+|-----+---+---+----|
+|   0 | x | x |  x |
+|  50 |   | x |    |
+| 150 |   | x |    |
+
 * Extract, Reify, Query Experiments and their Rally Results
 The execution of a Rally scenario (such as those seen in the previous
 section -- see [[*Considered Rally Scenarios][Considered Rally Scenarios]]) produces a json file. The
@@ -561,13 +622,9 @@ accessors for all of them thanks to the [[https://docs.python.org/3/library/glob
 #+CAPTION: Paths to Rally Json Results File.
 #+NAME: lst:xp-paths
 #+BEGIN_SRC python :results silent
-# XP_PATHS = './marie/'
 XP_PATHS = './ecotype/'
-# MARIADB_XP_PATHS = glob.glob(XP_PATHS + 'mariadb-*/rally_home/*.json')
 MARIADB_XP_PATHS = glob.glob(XP_PATHS + 'mariadb-*/rally_home/*.json')
-# GALERA_XP_PATHS = glob.glob(XP_PATHS + 'galera-*/rally_home/*.json')
 GALERA_XP_PATHS = glob.glob(XP_PATHS + 'galera-*/rally_home/*.json')
-# CRDB_XP_PATHS = glob.glob(XP_PATHS + 'cockroachdb-*/rally_home/*.json')
 CRDB_XP_PATHS = glob.glob(XP_PATHS + 'cockroachdb-*/rally_home/*.json')
 #+END_SRC
 
@@ -985,7 +1042,7 @@ def series_stackedbar_plot(scn: 'xp.scenario',
     ax.set_xticks(bar_index)
     # Operations (index) in the Series, e.g.,
     # keystone_v3.create_project, keystone_v3.create_user, ...
-    operations = OPS[scn]
+    operations = RALLY[scn]
     #
     normalized_ops_std = {}
     for attr, v in ops_std.items():
@@ -1011,8 +1068,8 @@ def series_stackedbar_plot(scn: 'xp.scenario',
     # keystone_v3.list_services   0.023072  0.023743  0.026078
     # keystone_v3.get_services    0.020144  0.020214  0.022274
     df  = pd.DataFrame.from_dict({ k: s for k, (s, succ, std) in normalized_ops_std.items() })
-    success = [ succ for k, (s, succ, std) in normalized_ops_std.items() ]
-    std = [ std for k, (s, succ, std) in normalized_ops_std.items() ]
+    successes = [ succ for k, (s, succ, std) in normalized_ops_std.items() ]
+    stds = [ std for k, (s, succ, std) in normalized_ops_std.items() ]
     # Plots rows one after the other (stacked). The plot is
     # made by calling `ax.bar` with all values of the first row,
     # then, all values of the second row, and so on, until the last
@@ -1031,18 +1088,14 @@ def series_stackedbar_plot(scn: 'xp.scenario',
     for irect, rect in enumerate(rects):
         x = rect.get_x() + rect.get_width()*0.5
         y = rect.get_y() + rect.get_height()*1.01
-        succ = int(round(success[irect] * 100))
-        ax.text(x, y, f'{succ}%', ha='center', va='bottom')
+        fail = round(1.0 - successes[irect], 2) if not np.isnan(successes[irect]) else 'NaN'
+        std = round(stds[irect], 2)
+        ax.text(x, y, f'σ: {std}, λ: {fail}',
+                ha='center',
+                va='bottom',
+                size='x-small')
     #
     ax.set_xticklabels(bars)
-
-csize_plot("%s Completion Time (s)",
-           series_stackedbar_plot,
-           'imgs/cluster-size-impact-nburst.svg',
-           # Compute the mean and the std of the results
-           (XPS_CSIZE_NBURST
-            .on_value(lambda df: (df.median(), df.sum(axis=1).std()))
-            .to_dict()))
 
 def series_linear_plot(scn: 'xp.scenario',
                        cfs: Dict['xp.attr', Union[pd.Series, None]],
@@ -1075,10 +1128,10 @@ def csize_plot(ytitle: str,
                filepath: str,
                xps: Dict[Tuple['xp.scenario', 'xp.rdbms', 'xp.cluster_size'], T],
                legend: Union['bottom-out', 'all'] = 'bottom-out'):
-    subfig_width  = 4    # inch
-    subfig_height = 4    # inch
-    nscns  = len(SCNS)   # Number of scenarios
-    nrdbms = len(RDBMSS) # Number of rdbms
+    subfig_width  = 4 # inch
+    subfig_height = 4 # inch
+    nscns  = len(RALLY.keys()) # Number of scenarios
+    nrdbms = len(RDBMSS)       # Number of rdbms
     fig, axs = plt.subplots(nrows=nrdbms,
                             ncols=nscns,
                             figsize=(subfig_width  * nscns,
@@ -1087,7 +1140,7 @@ def csize_plot(ytitle: str,
                             sharex='col',
                             sharey='col')
     # Subplots for sncs x rdmbss
-    scns_rdbmss = [ (s, r) for s in enumerate(SCNS) for r in enumerate(RDBMSS) ]
+    scns_rdbmss = [ (s, r) for s in enumerate(RALLY.keys()) for r in enumerate(RDBMSS) ]
     for (iscn, scn), (irdbms, rdbms) in scns_rdbmss:
         # Get subplot for `scn` and `rdbms`
         ax = axs[irdbms][iscn]
@@ -1150,10 +1203,6 @@ XPS_CSIZE_NBURST = (XPS
 *** Mean of Keystone Operations
 #+NAME: lst:xps_csize_nburst
 #+BEGIN_SRC python :results file :exports results
-def debug(df):
-    print(df)
-    return df
-
 csize_plot("%s Completion Time (s)",
            series_stackedbar_plot,
            'imgs/cluster-size-impact-nburst.svg',
@@ -1189,109 +1238,6 @@ csize_plot("%s",
 #+ATTR_ORG: :width 100
 #+RESULTS: lst:xps_csize_nburst_cdf
 [[file:imgs/cluster-size-impact-nburst-cdf.svg]]
-
-*** Raw Results                                                    :noexport:
-#+BEGIN_SRC python :results raw :exports results
-# XPS_CSIZE_NBURST.map(scn_mean_std).map(df2orgtablestr).make_string('\n')
-#+END_SRC
-
-#+RESULTS:
-('KeystoneBasic.create_and_list_tenants', 'galera', 3)
-('KeystoneBasic.create_and_list_tenants', 'galera', 3)
-#+CAPTION: KeystoneBasic.authenticate_user_and_validate_token
-#+NAME: tbl:KeystoneBasic.authenticate_user_and_validate_token
-| Authenticate User... | keystone_v3.fetch_token | keystone_v3.validate_token |   std |
-|----------------------+-------------------------+----------------------------+-------|
-| ('cockroachdb', 3)   |                   0.054 |                      0.083 | 0.003 |
-| ('cockroachdb', 9)   |                   0.058 |                      0.090 | 0.005 |
-| ('cockroachdb', 45)  |                   0.059 |                      0.093 | 0.003 |
-| ('galera', 3)        |                   0.046 |                      0.068 | 0.005 |
-| ('galera', 9)        |                   0.045 |                      0.070 | 0.004 |
-| ('galera', 45)       |                   0.049 |                      0.077 | 0.010 |
-| ('mariadb', 3)       |                   0.042 |                      0.067 | 0.003 |
-| ('mariadb', 9)       |                   0.045 |                      0.067 | 0.003 |
-| ('mariadb', 45)      |                   0.048 |                      0.077 | 0.006 |
-
-#+CAPTION: KeystoneBasic.create_add_and_list_user_roles
-#+NAME: tbl:KeystoneBasic.create_add_and_list_user_roles
-|Create Add And...|keystone_v3.create_role|keystone_v3.add_role|keystone_v3.list_roles|std|
-|--
-|('cockroachdb', 3)|0.104|0.032|0.032|0.024|
-|('cockroachdb', 9)|0.106|0.032|0.032|0.023|
-|('cockroachdb', 45)|0.121|0.035|0.035|0.028|
-|('galera', 3)|0.071|0.026|0.026|0.005|
-|('galera', 9)|0.074|0.028|0.027|0.004|
-|('galera', 45)|0.133|0.076|0.048|0.090|
-|('mariadb', 3)|0.077|0.025|0.026|0.015|
-|('mariadb', 9)|0.080|0.025|0.026|0.017|
-|('mariadb', 45)|0.077|0.027|0.028|0.011|
-
-#+CAPTION: KeystoneBasic.create_and_list_tenants
-#+NAME: tbl:KeystoneBasic.create_and_list_tenants
-|Create And List...|keystone_v3.create_project|keystone_v3.list_projects|std|
-|--
-|('cockroachdb', 3)|0.122|0.023|0.002|
-|('cockroachdb', 9)|0.134|0.025|0.005|
-|('cockroachdb', 45)|0.141|0.026|0.004|
-|('galera', 3)|0.104|0.020|0.004|
-|('galera', 9)|0.105|0.020|0.003|
-|('galera', 45)|0.129|0.024|0.014|
-|('mariadb', 3)|0.100|0.020|0.004|
-|('mariadb', 9)|0.103|0.020|0.003|
-|('mariadb', 45)|0.110|0.022|0.004|
-
-#+CAPTION: KeystoneBasic.create_and_list_users
-#+NAME: tbl:KeystoneBasic.create_and_list_users
-|Create And List...|keystone_v3.create_user|keystone_v3.list_users|std|
-|--
-|('cockroachdb', 3)|0.139|0.084|0.015|
-|('cockroachdb', 9)|0.147|0.085|0.019|
-|('cockroachdb', 45)|0.150|0.084|0.009|
-|('galera', 3)|0.111|0.058|0.012|
-|('galera', 9)|0.114|0.059|0.012|
-|('mariadb', 3)|0.108|0.057|0.014|
-|('mariadb', 9)|0.111|0.056|0.012|
-|('mariadb', 45)|0.120|0.057|0.011|
-
-#+CAPTION: KeystoneBasic.create_user_set_enabled_and_delete
-#+NAME: tbl:KeystoneBasic.create_user_set_enabled_and_delete
-|Create User Set...|keystone_v3.create_user|keystone_v3.update_user|keystone_v3.delete_user|std|
-|--
-|('cockroachdb', 3)|0.139|0.081|0.770|3.037|
-|('cockroachdb', 9)|0.156|0.105|0.796|1.976|
-|('cockroachdb', 45)|0.161|0.111|0.562|1.046|
-|('galera', 3)|0.118|0.063|0.108|0.025|
-|('galera', 9)|0.117|0.064|0.111|0.015|
-|('mariadb', 3)|0.114|0.062|0.108|0.022|
-|('mariadb', 9)|0.114|0.058|0.104|0.015|
-|('mariadb', 45)|0.137|0.068|0.112|0.032|
-
-#+CAPTION: KeystoneBasic.create_user_update_password
-#+NAME: tbl:KeystoneBasic.create_user_update_password
-|Create User...|keystone_v3.create_user|keystone_v3.update_user|std|
-|--
-|('cockroachdb', 3)|0.132|1.253|6.381|
-|('cockroachdb', 9)|0.184|0.554|2.726|
-|('cockroachdb', 45)|0.181|0.567|2.317|
-|('galera', 3)|0.112|0.065|0.006|
-|('galera', 9)|0.115|0.069|0.006|
-|('mariadb', 3)|0.108|0.063|0.006|
-|('mariadb', 9)|0.111|0.065|0.008|
-|('mariadb', 45)|0.123|0.069|0.009|
-
-#+CAPTION: KeystoneBasic.get_entities
-#+NAME: tbl:KeystoneBasic.get_entities
-|Get Entities|keystone_v3.create_project|keystone_v3.create_user|keystone_v3.create_role|keystone_v3.get_project|keystone_v3.get_user|keystone_v3.get_role|keystone_v3.list_services|keystone_v3.get_services|std|
-|--
-|('cockroachdb', 3)|0.137|0.176|0.031|0.021|0.020|0.020|0.023|0.020|0.011|
-|('cockroachdb', 9)|0.146|0.183|0.031|0.021|0.020|0.021|0.024|0.020|0.009|
-|('cockroachdb', 45)|0.154|0.197|0.034|0.023|0.023|0.023|0.026|0.022|0.011|
-|('galera', 3)|0.114|0.142|0.025|0.018|0.018|0.017|0.019|0.017|0.009|
-|('galera', 9)|0.117|0.145|0.025|0.018|0.018|0.018|0.020|0.018|0.009|
-|('galera', 45)|0.277|0.357|0.363|0.037|0.030|0.028|0.027|0.020|1.236|
-|('mariadb', 3)|0.110|0.137|0.023|0.018|0.018|0.018|0.019|0.017|0.011|
-|('mariadb', 9)|0.112|0.141|0.023|0.018|0.018|0.018|0.019|0.017|0.010|
-|('mariadb', 45)|0.121|0.150|0.026|0.020|0.020|0.020|0.021|0.020|0.011|
 
 ** Burst
 #+NAME: lst:xps_csize_burst
@@ -1342,7 +1288,7 @@ csize_plot("%s  (s)",
 #+CAPTION: Impact of the Cluster Size on the
 #+CAPTION: Completion Time (Cumulative Frequency -- Burst).
 #+ATTR_ORG: :width 100
-#+RESULTS: lst:xps_csiz_burst_cdf
+#+RESULTS: lst:xps_csize_burst_cdf
 [[file:imgs/cluster-size-impact-burst-cdf.svg]]
 
 * Delay Impact
@@ -1363,10 +1309,10 @@ def delay_plot(ytitle: str,
                filepath: str,
                xps: Dict[Tuple['xp.scenario', 'xp.rdbms', 'xp.delay'], T],
                legend: Union['bottom-out', 'all'] = 'bottom-out'):
-    subfig_width  = 4    # inch
-    subfig_height = 4    # inch
-    nscns  = len(SCNS)   # Number of scenarios
-    nrdbms = len(RDBMSS) # Number of rdbms
+    subfig_width  = 4 # inch
+    subfig_height = 4 # inch
+    nscns  = len(RALLY.keys()) # Number of scenarios
+    nrdbms = len(RDBMSS)       # Number of rdbms
     fig, axs = plt.subplots(nrows=nrdbms,
                             ncols=nscns,
                             figsize=(subfig_width  * nscns,
@@ -1375,7 +1321,7 @@ def delay_plot(ytitle: str,
                             sharex='col',
                             sharey='col')
     # Subplots for sncs x rdmbss
-    scns_rdbmss = [ (s, r) for s in enumerate(SCNS) for r in enumerate(RDBMSS) ]
+    scns_rdbmss = [ (s, r) for s in enumerate(RALLY.keys()) for r in enumerate(RDBMSS) ]
     for (iscn, scn), (irdbms, rdbms) in scns_rdbmss:
         # Get subplot for `scn` and `rdbms`
         ax = axs[irdbms][iscn]
@@ -1436,6 +1382,7 @@ XPS_DELAY_NBURST = (XPS
                     .filter(when_cluster_size(9))
                     .filter(compose(not_, is_burst))
                     .group_by(lambda xp: (xp.scenario, xp.rdbms, xp.latency))
+                    .map_on_value(reify_in_xpdf('success'))
                     .map_on_value(attrgetter('dataframe'))
                     .map_on_value(filter_percentile(.9))
                     .on_value(lambda dfs: pd.concat(dfs.to_list())))
@@ -1481,6 +1428,7 @@ XPS_DELAY_BURST = (XPS
                    .filter(when_cluster_size(9))
                    .filter(is_burst)
                    .group_by(lambda xp: (xp.scenario, xp.rdbms, xp.latency))
+                   .map_on_value(reify_in_xpdf('success'))
                    .map_on_value(attrgetter('dataframe'))
                    .map_on_value(filter_percentile(.9))
                    .on_value(lambda dfs: pd.concat(dfs.to_list())))
