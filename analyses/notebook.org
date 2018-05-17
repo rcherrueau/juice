@@ -964,7 +964,7 @@ def scn_mean_std(obj: Tuple['scenario', pd.DataFrame]) -> Tuple[
 #+NAME: lst:ploting
 #+BEGIN_SRC python :results silent
 def series_stackedbar_plot(scn: 'xp.scenario',
-                           ops_std: Dict['xp.attr', Union[Tuple[pd.Series, float], None]],
+                           ops_std: Dict['xp.attr', Union[Tuple['pd.Series_with_success', float], None]],
                            ax: matplotlib.axes.Axes):
     """Vertical bar plot of a dict of pd.Series.
 
@@ -991,12 +991,14 @@ def series_stackedbar_plot(scn: 'xp.scenario',
     for attr, v in ops_std.items():
         if v:
             operation_series = normalize_series(scn, v[0])
+            success = v[0].loc["success"]
             std = v[1]
         else:
             operation_series = make_series(scn)
+            success = 0
             std = 0
         #
-        normalized_ops_std.setdefault(attr, (operation_series, std))
+        normalized_ops_std.setdefault(attr, (operation_series, success, std))
     #
     # Make a datafram with results, e.g.,
     #                                   3         9         45
@@ -1008,8 +1010,9 @@ def series_stackedbar_plot(scn: 'xp.scenario',
     # keystone_v3.get_role        0.020130  0.020629  0.022903
     # keystone_v3.list_services   0.023072  0.023743  0.026078
     # keystone_v3.get_services    0.020144  0.020214  0.022274
-    df  = pd.DataFrame.from_dict({ k: s for k, (s, std) in normalized_ops_std.items() })
-    std = [ std for k, (s, std) in normalized_ops_std.items() ]
+    df  = pd.DataFrame.from_dict({ k: s for k, (s, succ, std) in normalized_ops_std.items() })
+    success = [ succ for k, (s, succ, std) in normalized_ops_std.items() ]
+    std = [ std for k, (s, succ, std) in normalized_ops_std.items() ]
     # Plots rows one after the other (stacked). The plot is
     # made by calling `ax.bar` with all values of the first row,
     # then, all values of the second row, and so on, until the last
@@ -1021,9 +1024,25 @@ def series_stackedbar_plot(scn: 'xp.scenario',
         # yerr = None if row != operations[-1] else std
         yerr = None
         # Plot
-        ax.bar(bar_index, df.loc[row].values, bar_width,
-               bottom=previous_row, yerr=yerr, label=row)
+        rects = ax.bar(bar_index, df.loc[row].values, bar_width,
+                       bottom=previous_row, yerr=yerr, label=row)
+    #
+    # Add success rate on top of the last row
+    for irect, rect in enumerate(rects):
+        x = rect.get_x() + rect.get_width()*0.5
+        y = rect.get_y() + rect.get_height()*1.01
+        succ = int(round(success[irect] * 100))
+        ax.text(x, y, f'{succ}%', ha='center', va='bottom')
+    #
     ax.set_xticklabels(bars)
+
+csize_plot("%s Completion Time (s)",
+           series_stackedbar_plot,
+           'imgs/cluster-size-impact-nburst.svg',
+           # Compute the mean and the std of the results
+           (XPS_CSIZE_NBURST
+            .on_value(lambda df: (df.median(), df.sum(axis=1).std()))
+            .to_dict()))
 
 def series_linear_plot(scn: 'xp.scenario',
                        cfs: Dict['xp.attr', Union[pd.Series, None]],
@@ -1052,7 +1071,7 @@ varies, depending of the size of the cluster.
 def csize_plot(ytitle: str,
                plot: Callable[['xp.scenario',
                                Dict['xp.cluster_size', T],
-                               matplotlib.axes.Axes], 'None'],
+                               matplotlib.axes.Axes], None],
                filepath: str,
                xps: Dict[Tuple['xp.scenario', 'xp.rdbms', 'xp.cluster_size'], T],
                legend: Union['bottom-out', 'all'] = 'bottom-out'):
@@ -1119,6 +1138,7 @@ XPS_CSIZE_NBURST = (XPS
                     # Index XPs by scenario: [((scenario, rdbms, csize), [xps-csize{3/9/45}-lat0])]
                     .group_by(lambda xp: (xp.scenario, xp.rdbms, xp.cluster_size))
                     # Only keep values under the 95th percentile.
+                    .map_on_value(reify_in_xpdf('success'))
                     .map_on_value(attrgetter('dataframe'))
                     .map_on_value(filter_percentile(.9))
                     # Get one big DataFrame -- concat all burst
@@ -1130,12 +1150,16 @@ XPS_CSIZE_NBURST = (XPS
 *** Mean of Keystone Operations
 #+NAME: lst:xps_csize_nburst
 #+BEGIN_SRC python :results file :exports results
+def debug(df):
+    print(df)
+    return df
+
 csize_plot("%s Completion Time (s)",
            series_stackedbar_plot,
            'imgs/cluster-size-impact-nburst.svg',
            # Compute the mean and the std of the results
            (XPS_CSIZE_NBURST
-            .on_value(lambda df: (df.mean(), df.sum(axis=1).std()))
+            .on_value(lambda df: (df.median(), df.sum(axis=1).std()))
             .to_dict()))
 #+END_SRC
 
@@ -1153,6 +1177,7 @@ csize_plot("%s",
            # Sum operations of each iteration, and then compute de
            # cumulative frequency
            (XPS_CSIZE_NBURST
+            .on_value(lambda df: df.drop('success', axis='columns'))
             .on_value(lambda df: df.sum(axis='columns'))
             .on_value(make_cumulative_frequency)
             .to_dict()),
@@ -1275,6 +1300,7 @@ XPS_CSIZE_BURST = (XPS
                    .filter(when_latency(0))
                    .filter(is_burst)
                    .group_by(lambda xp: (xp.scenario, xp.rdbms, xp.cluster_size))
+                   .map_on_value(reify_in_xpdf('success'))
                    .map_on_value(attrgetter('dataframe'))
                    .map_on_value(filter_percentile(.9))
                    .on_value(lambda dfs: pd.concat(dfs.to_list())))
@@ -1306,15 +1332,17 @@ csize_plot("%s  (s)",
            # Sum operations of each iteration, and then compute de
            # cumulative frequency
            (XPS_CSIZE_BURST
+            .on_value(lambda df: df.drop('success', axis='columns'))
             .on_value(lambda df: df.sum(axis='columns'))
             .on_value(make_cumulative_frequency)
-            .to_dict()))
+            .to_dict()),
+           legend='all')
 #+END_SRC
 
 #+CAPTION: Impact of the Cluster Size on the
 #+CAPTION: Completion Time (Cumulative Frequency -- Burst).
 #+ATTR_ORG: :width 100
-#+RESULTS: lst:xps_csize_burst_cdf
+#+RESULTS: lst:xps_csiz_burst_cdf
 [[file:imgs/cluster-size-impact-burst-cdf.svg]]
 
 * Delay Impact
@@ -1331,7 +1359,7 @@ nodes of the swarm.
 def delay_plot(ytitle: str,
                plot: Callable[['xp.scenario',
                                Dict['xp.delay', T],
-                               matplotlib.axes.Axes], 'None'],
+                               matplotlib.axes.Axes], None],
                filepath: str,
                xps: Dict[Tuple['xp.scenario', 'xp.rdbms', 'xp.delay'], T],
                legend: Union['bottom-out', 'all'] = 'bottom-out'):
@@ -1420,7 +1448,7 @@ delay_plot("%s Completion Time (s)",
            series_stackedbar_plot,
            'imgs/delay-impact-nburst.svg',
            # Compute the mean and the std of the results
-           XPS_DELAY_NBURST.on_value(lambda df: (df.mean(), df.sum(axis=1).std())).to_dict())
+           XPS_DELAY_NBURST.on_value(lambda df: (df.median(), df.sum(axis=1).std())).to_dict())
 #+END_SRC
 
 #+CAPTION: Impact of the Delay on the Completion Time (one Rally).
