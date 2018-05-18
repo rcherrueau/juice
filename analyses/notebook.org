@@ -96,14 +96,19 @@ def make_cumulative_frequency(s: pd.Series) -> pd.Series:
 
 def success_rate(rally_values) -> float:
     "Returns success rate of a Rally scenario"
+    JPATH_STATUS  = '$.tasks[0].status'
     JPATH_SUCCESS = '$.tasks[0].subtasks[0].workloads[0].statistics.durations.total.data.success'
     success = 0
-    success_str = rally_values.execute(JPATH_SUCCESS)
+    # Rally status is either finished or crashed. In case of crashed,
+    # the json contains no information about the scenarion execution.
+    if rally_values.execute(JPATH_STATUS) == 'finished':
+        # Rally success values is either:
+        # - 'n/a' if the execution of the scenario failed
+        # - A string that forms a percentage (e.g., '95.5%')
+        success_str = rally_values.execute(JPATH_SUCCESS)
+        if success_str.endswith('%'):
+            success = round(float(success_str[:-1]) / 100., 2)
     #
-    if success_str.endswith('%'): # Success could be a percentage or
-        # 'n/a'
-        success = round(float(success_str[:-1]) / 100., 2)
-        #
     return success
 
 def debug(t):
@@ -157,13 +162,13 @@ def xp2orgtable(xps: List['XP']) -> List[List[str]]:
         latency = "LAN" if xp.latency == 0 else xp.latency * 2
         scn = xp.scenario.replace('KeystoneBasic.', '')
         fp = f'[[file:{xp.filepath}][...{xp.filepath[-11:]}]]'
-        return [xp.cluster_size, latency, scn, xp.burst, xp.success, fp]
+        return [xp.cluster_size, latency, scn, xp.nosebleed, xp.success, fp]
     # Make org table
     table = [ xp2orgtablerow(xp) for xp in xps ] # Body
     table.insert(0, None)                        # Hline
     table.insert(0, ["#Cluster", "RTT (ms)",     # Header
                      "Keystone Scenario",
-                     "Burst", "Success", "Filepath"])
+                     "Nosebleed", "Success", "Filepath"])
     return table
 
 def _and(filters: List[Callable[[T], bool]]) -> Callable[[T], bool]:
@@ -301,22 +306,24 @@ Keystone
 * Experiment Parameters
 This is the list of all parameters considered in this notebook.
 
-** Swarm size
-The swarm size (see, [[lst:swarm_size]]) defines the number of OpenStack
-instances deployed for an experiment. It varies between ~3~, ~9~ and
-~45~. A value of ~3~, means juice deploys OpenStack on three different
-nodes. The keystone rdbms backend is then centralized in one of the
-three nodes for MariaDB, or distributed on all the three nodes for
-Galera and CRDB (same for ~9~ and ~45~). All of theses values are a
-multiple of three, which is the default CRDB replication size. The
-value of ~45~ comes from the maximum number of nodes we have in the
-Nantes ecotype grid5000 cluster.
+** OpenStack Size
+The OpenStack size (see, [[lst:swarm_size]]) defines the number of
+OpenStack instances deployed for an experiment. It varies between ~3~,
+~9~ and ~45~. A value of ~3~, means juice deploys OpenStack on three
+different nodes. The keystone rdbms backend is then centralized in one
+of the three nodes for MariaDB, or distributed on all the three nodes
+for Galera and CRDB (same for ~9~ and ~45~).
 
 #+CAPTION: Number of OpenStack Instances Deployed.
 #+NAME: lst:swarm_size
 #+BEGIN_SRC python :results silent
 CSIZES = [ 3, 9, 45 ]
 #+END_SRC
+
+Values ~3~, ~9~ and ~45~ are all a multiple of three, which is the
+default CRDB replication size. The value of ~45~ comes from the
+maximum number of nodes available on the Nantes ecotype grid5000
+cluster.
 
 ** Delay
 The delay (see, [[lst:delays]]) defines the network latency between two
@@ -336,7 +343,7 @@ juice applies ~tc~ rules on network interfaces that are dedicated to
 the RDBMS communication. Thus, metrics collection and other network
 traffics are not limited.
 
-** Considered Rally scenarios
+** Rally scenarios
 [[https://rally.readthedocs.io/en/latest/][Rally]] is a testing benchmarking tool for OpenStack. Juice uses Rally
 to evaluate how OpenStack control plane behaves at scale. This section
 describes Rally scenarios that are considered in this notebook. The
@@ -347,7 +354,39 @@ strategy to another (i.e., replicate records on all of your nodes or
 not).
 
 *** TODO A typical Rally execution
-**** TODO Burst execution
+A Rally executes its load on one instance of OpenStack. Two variables
+configure the execution of a Rally scenario: the /times/ which is the
+number of iteration execution performed for a scenario, and
+/concurrency/ which is the number of parallel iteration execution.
+Thus, a scenario with a /times/ of 100 runs one hundred iterations of
+the scenario by a constant load on the OpenStack instance. A
+/concurrency/ of 10 specifies that the 100 iterations are executed by
+10 users in a concurrent manner. The execution output may look like
+this:
+#+BEGIN_EXAMPLE
+Task 19b09a0b-7aec-4353-b215-8d5b23706cd7 | ITER: 1 START
+Task 19b09a0b-7aec-4353-b215-8d5b23706cd7 | ITER: 2 START
+Task 19b09a0b-7aec-4353-b215-8d5b23706cd7 | ITER: 4 START
+Task 19b09a0b-7aec-4353-b215-8d5b23706cd7 | ITER: 3 START
+Task 19b09a0b-7aec-4353-b215-8d5b23706cd7 | ITER: 5 START
+Task 19b09a0b-7aec-4353-b215-8d5b23706cd7 | ITER: 6 START
+Task 19b09a0b-7aec-4353-b215-8d5b23706cd7 | ITER: 8 START
+Task 19b09a0b-7aec-4353-b215-8d5b23706cd7 | ITER: 7 START
+Task 19b09a0b-7aec-4353-b215-8d5b23706cd7 | ITER: 9 START
+Task 19b09a0b-7aec-4353-b215-8d5b23706cd7 | ITER: 10 START
+Task 19b09a0b-7aec-4353-b215-8d5b23706cd7 | ITER: 4 END
+Task 19b09a0b-7aec-4353-b215-8d5b23706cd7 | ITER: 11 START
+Task 19b09a0b-7aec-4353-b215-8d5b23706cd7 | ITER: 3 END
+Task 19b09a0b-7aec-4353-b215-8d5b23706cd7 | ITER: 12 START
+...
+Task 19b09a0b-7aec-4353-b215-8d5b23706cd7 | ITER: 100 END
+#+END_EXAMPLE
+
+#+BEGIN_note
+This behavior corresponds to the constant runner. Rally lets you
+change this.
+#+END_note
+
 *** keystone/authenticate-user-and-validate-token
 Description: authenticate and validate a keystone token.
 
@@ -548,51 +587,31 @@ RALLY = OrderedDict([
    ["keystone_v3.create_user", "keystone_v3.list_users",])])
 #+END_SRC
 
-** Experiments Links                                             :nonoexport:
-*** MariaDB
-No Burst
-|     | 3 | 9 | 45 |
-|-----+---+---+----|
-|   0 | x | x | x  |
-|  50 |   | x |    |
-| 150 |   | x |    |
+** TODO Nosebleed execution
 
-Burst
-|     | 3 | 9 | 45 |
-|-----+---+---+----|
-|   0 | x | x |  x |
-|  50 |   | x |    |
-| 150 |   | x |    |
+** Experiments raw results                                       :nonoexport:
+All test are run in single (s) and nosebleeding (n) Rally.
 
-*** Galera
-No Burst
-|     | 3 | 9 | 45 |
-|-----+---+---+----|
-|   0 | x | x | x  |
-|  50 |   | x |    |
-| 150 |   | x |    |
+#+NAME: tbl:mariadb-experiments
+|     |    3 | 9    |   45 |
+|-----+------+------+------|
+|   0 | s, n | s, n | s, n |
+|  50 |      | s, n |      |
+| 150 |      | s, n |      |
 
-Burst
-|     | 3 | 9 | 45 |
-|-----+---+---+----|
-|   0 | x | x |  x |
-|  50 |   | x |    |
-| 150 |   | x |    |
+#+NAME: tbl:galera-experiments
+|     |    3 | 9    |   45 |
+|-----+------+------+------|
+|   0 | s, n | s, n | s, n |
+|  50 |      | s, n |      |
+| 150 |      | s, n |      |
 
-*** CockroachDB
-No Burst
-|     | 3 | 9 | 45 |
-|-----+---+---+----|
-|   0 | x | x | x  |
-|  50 |   | x |    |
-| 150 |   | x |    |
-
-Burst
-|     | 3 | 9 | 45 |
-|-----+---+---+----|
-|   0 | x | x |  x |
-|  50 |   | x |    |
-| 150 |   | x |    |
+#+NAME: tbl:cockroachdb-experiments
+|     |    3 | 9    |   45 |
+|-----+------+------+------|
+|   0 | s, n | s, n | s, n |
+|  50 |      | s, n |      |
+| 150 |      | s, n |      |
 
 * Extract, Reify, Query Experiments and their Rally Results
 The execution of a Rally scenario (such as those seen in the previous
@@ -647,7 +666,7 @@ class XP:
     cluster_size: int # Size of the cluster
     latency: int      # Latency between nodes
     success: str      # Success rate (e.g., "100%")
-    burst: bool       # Experiment performed during a burst
+    nosebleed: bool       # Experiment performed during a nosebleed
     dataframe: pd.DataFrame  # Results in a pandas 2d DataFrame (ref:xp-dataclass-end)
 #+END_SRC
 
@@ -664,29 +683,25 @@ def make_xp(rally_path: str) -> XP:
     # Find XP name in the `rally_path`
     RE_XP = r'(?:mariadb|galera|cockroachdb)-[a-zA-Z0-9\-]+'
     # Find XP params in the `rally_path` (e.g., cluster size, latency, ...)
-    RE_XP_PARAMS = r'(?P<db>[a-z]+)-(?P<cluster_size>[0-9]+)-(?P<latency>[0-9]+)-(?P<burst>[TF]).*'
+    RE_XP_PARAMS = r'(?P<db>[a-z]+)-(?P<cluster_size>[0-9]+)-(?P<latency>[0-9]+)-(?P<nosebleed>[TF]).*'
     # Json path to the rally scenario's name
     JPATH_SCN = '$.tasks[0].subtasks[0].title'
-    # Json path to the rally status (crashed result are excluded)
-    JPATH_STATUS  = '$.tasks[0].status'
     #
     <<lst:dataframe_per_operations>> (ref:dataframe_per_operations)
     #
     with open(rally_path) as rally_json:
         rally_values = objectpath.Tree(json.load(rally_json))
-        rally_status = rally_values.execute(JPATH_STATUS)
-        if rally_status == 'finished': # Remove crashed rally
-            xp_info = re.match(RE_XP_PARAMS, re.findall(RE_XP, rally_path)[0]).groupdict()
-            success = success_rate(rally_values)
-            return XP(
-                scenario = rally_values.execute(JPATH_SCN),
-                filepath = rally_path,
-                rdbms = xp_info.get('db'),
-                cluster_size = int(xp_info.get('cluster_size')),
-                latency = int(xp_info.get('latency')),
-                success = success,
-                burst = True if xp_info.get('burst') is 'T' else False,
-                dataframe = dataframe_per_operations(rally_values) if success else None)
+        xp_info = re.match(RE_XP_PARAMS, re.findall(RE_XP, rally_path)[0]).groupdict()
+        success = success_rate(rally_values)
+        return XP(
+            scenario = rally_values.execute(JPATH_SCN),
+            filepath = rally_path,
+            rdbms = xp_info.get('db'),
+            cluster_size = int(xp_info.get('cluster_size')),
+            latency = int(xp_info.get('latency')),
+            success = success,
+            nosebleed = True if xp_info.get('nosebleed') is 'T' else False,
+            dataframe = dataframe_per_operations(rally_values)) if success else None
 #+END_SRC
 
 The [[(dataframe_per_operations)][~<<lst:dataframe_per_operations>>~]] is a placeholder for the
@@ -699,7 +714,7 @@ into ~XP~ objects is as simple as mapping over all experiment paths
 #+CAPTION: From Json Files to Python Objects.
 #+NAME: lst:xps
 #+BEGIN_SRC python :results silent
-XPS = seq(MARIADB_XP_PATHS + GALERA_XP_PATHS + CRDB_XP_PATHS).truth_map(make_xp)
+XPS = seq(MARIADB_XP_PATHS + GALERA_XP_PATHS + CRDB_XP_PATHS).truth_map(make_xp).cache()
 #+END_SRC
 
 This notebook also comes with a bunch of predicate in its toolbelt
@@ -716,7 +731,7 @@ source of this notebook.
 <<lst:hlq>>
 <<lst:hlp>>
 
-XPS = XPS.filter(with_success_rate(.01)).cache()
+XPS = XPS.cache()
 #+END_SRC
 
 *** MariaDB experiments
@@ -802,11 +817,12 @@ json and returns a Pandas [[https://pandas.pydata.org/pandas-docs/stable/generat
 JPATH_SERIES = '$.tasks[0].subtasks[0].workloads[0].data[len(@.error) is 0].atomic_actions'
 def dataframe_per_operations(rally_values: objectpath.Tree) -> pd.DataFrame:
     "Makes a 2d pd.DataFrame of completion time per keystone operations."
-    return pd.DataFrame.from_items(
+    df = pd.DataFrame.from_items(
         items=(seq(rally_values.execute(JPATH_SERIES))
                  .flatten()
                  .group_by(itemgetter('name'))
                  .map_on_value(lambda it: it['finished_at'] - it['started_at'])))
+    return df
 #+END_SRC
 
 The DataFrame is a table that lists all the completion times in second
@@ -826,7 +842,7 @@ CRDB_CLTENANTS = (XPS
     .filter(is_keystone_scn('create_and_list_tenants'))
     .filter(when_cluster_size(9))
     .filter(is_crdb)
-    .filter(compose(not_, is_burst))
+    .filter(compose(not_, is_nosebleed))
     .filter(when_latency(0))
     .map(attrgetter('dataframe'))                    # Get DataFrame
     .map(lambda df: df.assign(Total=df.sum(axis=1))) # Add a Total Column
@@ -905,9 +921,9 @@ def is_mariadb(xp: XP) -> bool:
     "Filter for MariaDB experiment."
     return xp.rdbms == 'mariadb'
 
-def is_burst(xp: XP) -> bool:
-    "Filter for bursted experiment."
-    return xp.burst
+def is_nosebleed(xp: XP) -> bool:
+    "Filter for nosebleeded experiment."
+    return xp.nosebleed
 
 def is_keystone_scn(scn: str) -> bool:
     "Filter for keystone scenario `scn`."
@@ -933,12 +949,12 @@ def xp_csize_rtt_b_scn_order(xp: XP) -> str:
     1. The database type (CRDB or Galera)
     2. Size of the cluster
     3. Latency
-    4. No Burst, Burst
+    4. No Nosebleed, Nosebleed
     5. Rally scenario's name
     """
     # Format String Syntax
     # https://docs.python.org/2/library/string.html#format-examples
-    return f'{xp.rdbms}-{xp.cluster_size:0>3}-{xp.latency:0>3}-{xp.burst}-{xp.scenario}'
+    return f'{xp.rdbms}-{xp.cluster_size:0>3}-{xp.latency:0>3}-{xp.nosebleed}-{xp.scenario}'
 
 #+END_SRC
 
@@ -972,7 +988,7 @@ def set_xp_df(xp: XP, new_df: pd.DataFrame) -> XP:
               cluster_size=xp.cluster_size,
               latency=xp.latency,
               success=xp.success,
-              burst=xp.burst,
+              nosebleed=xp.nosebleed,
               dataframe=new_df)
 
 def reify_in_xpdf(attr: str) -> Callable[[XP], XP]:
@@ -1183,49 +1199,49 @@ def csize_plot(ytitle: str,
     return filepath
 #+END_SRC
 
-** Non Burst
+** Single
 #+BEGIN_SRC python :results silent
-XPS_CSIZE_NBURST = (XPS
+XPS_CSIZE_SINGLE = (XPS
                     .filter(when_latency(0))
-                    .filter(compose(not_, is_burst))
+                    .filter(compose(not_, is_nosebleed))
                     # Index XPs by scenario: [((scenario, rdbms, csize), [xps-csize{3/9/45}-lat0])]
                     .group_by(lambda xp: (xp.scenario, xp.rdbms, xp.cluster_size))
                     # Only keep values under the 95th percentile.
                     .map_on_value(reify_in_xpdf('success'))
                     .map_on_value(attrgetter('dataframe'))
                     .map_on_value(filter_percentile(.9))
-                    # Get one big DataFrame -- concat all burst
+                    # Get one big DataFrame -- concat all nosebleed
                     # results:
                     # [((scenario, rdbms, csize), df{keystone.op1, keystone.op2, ...})]
                     .on_value(lambda dfs: pd.concat(dfs.to_list())))
 #+END_SRC
 
 *** Mean of Keystone Operations
-#+NAME: lst:xps_csize_nburst
+#+NAME: lst:xps_csize_single
 #+BEGIN_SRC python :results file :exports results
 csize_plot("%s Completion Time (s)",
            series_stackedbar_plot,
-           'imgs/cluster-size-impact-nburst.svg',
+           'imgs/cluster-size-impact-single.svg',
            # Compute the mean and the std of the results
-           (XPS_CSIZE_NBURST
+           (XPS_CSIZE_SINGLE
             .on_value(lambda df: (df.median(), df.sum(axis=1).std()))
             .to_dict()))
 #+END_SRC
 
 #+CAPTION: Impact of the Cluster Size on the Completion Time (one Rally).
 #+ATTR_ORG: :width 100
-#+RESULTS: lst:xps_csize_nburst
-[[file:imgs/cluster-size-impact-nburst.svg]]
+#+RESULTS: lst:xps_csize_single
+[[file:imgs/cluster-size-impact-single.svg]]
 
 *** Cumulative Frequency Distribution
-#+NAME: lst:xps_csize_nburst_cdf
+#+NAME: lst:xps_csize_single_cdf
 #+BEGIN_SRC python :results file :exports results
 csize_plot("%s",
            series_linear_plot,
-           'imgs/cluster-size-impact-nburst-cdf.svg',
+           'imgs/cluster-size-impact-single-cdf.svg',
            # Sum operations of each iteration, and then compute de
            # cumulative frequency
-           (XPS_CSIZE_NBURST
+           (XPS_CSIZE_SINGLE
             .on_value(lambda df: df.drop('success', axis='columns'))
             .on_value(lambda df: df.sum(axis='columns'))
             .on_value(make_cumulative_frequency)
@@ -1236,15 +1252,15 @@ csize_plot("%s",
 #+CAPTION: Impact of the Cluster Size on the
 #+CAPTION: Completion Time (Cumulative Frequency).
 #+ATTR_ORG: :width 100
-#+RESULTS: lst:xps_csize_nburst_cdf
-[[file:imgs/cluster-size-impact-nburst-cdf.svg]]
+#+RESULTS: lst:xps_csize_single_cdf
+[[file:imgs/cluster-size-impact-single-cdf.svg]]
 
-** Burst
-#+NAME: lst:xps_csize_burst
+** Nosebleed
+#+NAME: lst:xps_csize_nosebleed
 #+BEGIN_SRC python :results silent
-XPS_CSIZE_BURST = (XPS
+XPS_CSIZE_NOSEBLEED = (XPS
                    .filter(when_latency(0))
-                   .filter(is_burst)
+                   .filter(is_nosebleed)
                    .group_by(lambda xp: (xp.scenario, xp.rdbms, xp.cluster_size))
                    .map_on_value(reify_in_xpdf('success'))
                    .map_on_value(attrgetter('dataframe'))
@@ -1253,31 +1269,31 @@ XPS_CSIZE_BURST = (XPS
 #+END_SRC
 
 *** Mean of Keystone Operations
-#+NAME: lst:xps_csize_burst
+#+NAME: lst:xps_csize_nosebleed
 #+BEGIN_SRC python :results file :exports results
 csize_plot("%s Completion Time (s)",
            series_stackedbar_plot,
-           'imgs/cluster-size-impact-burst.svg',
+           'imgs/cluster-size-impact-nosebleed.svg',
            # Compute the mean and the std of the results
-           (XPS_CSIZE_BURST
+           (XPS_CSIZE_NOSEBLEED
             .on_value(lambda df: (df.mean(), df.sum(axis=1).std()))
             .to_dict()))
 #+END_SRC
 
-#+CAPTION: Impact of the Cluster Size on the Completion Time (burst).
+#+CAPTION: Impact of the Cluster Size on the Completion Time (nosebleed).
 #+ATTR_ORG: :width 100
-#+RESULTS: lst:xps_csize_burst
-[[file:imgs/cluster-size-impact-burst.svg]]
+#+RESULTS: lst:xps_csize_nosebleed
+[[file:imgs/cluster-size-impact-nosebleed.svg]]
 
 *** Cumulative Frequency Distribution
-#+NAME: lst:xps_csize_burst_cdf
+#+NAME: lst:xps_csize_nosebleed_cdf
 #+BEGIN_SRC python :results file :exports results
 csize_plot("%s  (s)",
            series_linear_plot,
-           'imgs/cluster-size-impact-burst-cdf.svg',
+           'imgs/cluster-size-impact-nosebleed-cdf.svg',
            # Sum operations of each iteration, and then compute de
            # cumulative frequency
-           (XPS_CSIZE_BURST
+           (XPS_CSIZE_NOSEBLEED
             .on_value(lambda df: df.drop('success', axis='columns'))
             .on_value(lambda df: df.sum(axis='columns'))
             .on_value(make_cumulative_frequency)
@@ -1286,10 +1302,10 @@ csize_plot("%s  (s)",
 #+END_SRC
 
 #+CAPTION: Impact of the Cluster Size on the
-#+CAPTION: Completion Time (Cumulative Frequency -- Burst).
+#+CAPTION: Completion Time (Cumulative Frequency -- Nosebleed).
 #+ATTR_ORG: :width 100
-#+RESULTS: lst:xps_csize_burst_cdf
-[[file:imgs/cluster-size-impact-burst-cdf.svg]]
+#+RESULTS: lst:xps_csize_nosebleed_cdf
+[[file:imgs/cluster-size-impact-nosebleed-cdf.svg]]
 
 * Delay Impact
 In this test, the size of the database cluster is 9 and the latency
@@ -1376,11 +1392,11 @@ See [[http://enos.irisa.fr/html/wan_g5k/cpt10/][cpt10-lat*-los0/*.stats]] for ra
 |   100.000000 |           234.189943 |
 |   200.000000 |           115.890071 |
 
-** Non Burst
+** Single
 #+BEGIN_SRC python :results silent
-XPS_DELAY_NBURST = (XPS
+XPS_DELAY_SINGLE = (XPS
                     .filter(when_cluster_size(9))
-                    .filter(compose(not_, is_burst))
+                    .filter(compose(not_, is_nosebleed))
                     .group_by(lambda xp: (xp.scenario, xp.rdbms, xp.latency))
                     .map_on_value(reify_in_xpdf('success'))
                     .map_on_value(attrgetter('dataframe'))
@@ -1389,27 +1405,27 @@ XPS_DELAY_NBURST = (XPS
 #+END_SRC
 
 *** Mean of Keystone Operations
-#+NAME: lst:xps_delay_nburst
+#+NAME: lst:xps_delay_single
 #+BEGIN_SRC python :results file :exports results
 delay_plot("%s Completion Time (s)",
            series_stackedbar_plot,
-           'imgs/delay-impact-nburst.svg',
+           'imgs/delay-impact-single.svg',
            # Compute the mean and the std of the results
-           XPS_DELAY_NBURST.on_value(lambda df: (df.median(), df.sum(axis=1).std())).to_dict())
+           XPS_DELAY_SINGLE.on_value(lambda df: (df.median(), df.sum(axis=1).std())).to_dict())
 #+END_SRC
 
 #+CAPTION: Impact of the Delay on the Completion Time (one Rally).
 #+ATTR_ORG: :width 100
-#+RESULTS: lst:xps_delay_nburst
-[[file:imgs/delay-impact-nburst.svg]]
+#+RESULTS: lst:xps_delay_single
+[[file:imgs/delay-impact-single.svg]]
 
 *** Cumulative Frequency Distribution
-#+NAME: lst:xps_delay_nburst_cdf
+#+NAME: lst:xps_delay_single_cdf
 #+BEGIN_SRC python :results file :exports results
 delay_plot("%s",
            series_linear_plot,
-           'imgs/delay-impact-nburst-cdf.svg',
-           (XPS_DELAY_NBURST
+           'imgs/delay-impact-single-cdf.svg',
+           (XPS_DELAY_SINGLE
             .on_value(lambda df: df.sum(axis='columns'))
             .on_value(make_cumulative_frequency)
             .to_dict()),
@@ -1419,14 +1435,14 @@ delay_plot("%s",
 #+CAPTION: Impact of the Delay on the
 #+CAPTION: Completion Time (Cumulative Frequency).
 #+ATTR_ORG: :width 100
-#+RESULTS: lst:xps_delay_nburst_cdf
-[[file:imgs/delay-impact-nburst-cdf.svg]]
+#+RESULTS: lst:xps_delay_single_cdf
+[[file:imgs/delay-impact-single-cdf.svg]]
 
-** Burst
+** Nosebleed
 #+BEGIN_SRC python :results silent
-XPS_DELAY_BURST = (XPS
+XPS_DELAY_NOSEBLEED = (XPS
                    .filter(when_cluster_size(9))
-                   .filter(is_burst)
+                   .filter(is_nosebleed)
                    .group_by(lambda xp: (xp.scenario, xp.rdbms, xp.latency))
                    .map_on_value(reify_in_xpdf('success'))
                    .map_on_value(attrgetter('dataframe'))
@@ -1435,27 +1451,27 @@ XPS_DELAY_BURST = (XPS
 #+END_SRC
 
 *** Mean of Keystone Operations
-#+NAME: lst:xps_delay_burst
+#+NAME: lst:xps_delay_nosebleed
 #+BEGIN_SRC python :results file :exports results
 delay_plot("%s Completion Time (s)",
            series_stackedbar_plot,
-           'imgs/delay-impact-burst.svg',
+           'imgs/delay-impact-nosebleed.svg',
            # Compute the mean and the std of the results
-           XPS_DELAY_BURST.on_value(lambda df: (df.mean(), df.sum(axis=1).std())).to_dict())
+           XPS_DELAY_NOSEBLEED.on_value(lambda df: (df.mean(), df.sum(axis=1).std())).to_dict())
 #+END_SRC
 
-#+CAPTION: Impact of the Delay on the Completion Time (Burst).
+#+CAPTION: Impact of the Delay on the Completion Time (Nosebleed).
 #+ATTR_ORG: :width 100
-#+RESULTS: lst:xps_delay_burst
-[[file:imgs/delay-impact-burst.svg]]
+#+RESULTS: lst:xps_delay_nosebleed
+[[file:imgs/delay-impact-nosebleed.svg]]
 
 *** Cumulative Frequency Distribution
-#+NAME: lst:xps_delay_burst_cdf
+#+NAME: lst:xps_delay_nosebleed_cdf
 #+BEGIN_SRC python :results file :exports results
 delay_plot("%s",
            series_linear_plot,
-           'imgs/delay-impact-burst-cdf.svg',
-           (XPS_DELAY_BURST
+           'imgs/delay-impact-nosebleed-cdf.svg',
+           (XPS_DELAY_NOSEBLEED
             .on_value(lambda df: df.sum(axis='columns'))
             .on_value(make_cumulative_frequency)
             .to_dict()),
@@ -1463,10 +1479,10 @@ delay_plot("%s",
 #+END_SRC
 
 #+CAPTION: Impact of the Delay on the
-#+CAPTION: Completion Time (Cumulative Frequency -- Burst).
+#+CAPTION: Completion Time (Cumulative Frequency -- Nosebleed).
 #+ATTR_ORG: :width 100
-#+RESULTS: lst:xps_delay_burst_cdf
-[[file:imgs/delay-impact-burst-cdf.svg]]
+#+RESULTS: lst:xps_delay_nosebleed_cdf
+[[file:imgs/delay-impact-nosebleed-cdf.svg]]
 
 * Do the size of the Database matter?
 From
