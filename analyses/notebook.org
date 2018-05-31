@@ -1,6 +1,6 @@
 # -*- org-confirm-babel-evaluate: nil; -*-
 #+TITLE: Juice Notebook
-#+AUTHOR: Marie Delavergne, Ronan-Alexandre Cherrueau
+#+AUTHOR: Marie Delavergne, Ronan-Alexandre Cherrueau, Adrien Lebre
 #+EMAIL: {firstname.lastname}@inria.fr
 #+DATE: <2018>
 
@@ -52,7 +52,7 @@ consensus algorithms to scale.
  - [[#considered-openstack-services][Considered OpenStack Services]]
  - [[#experiment-parameters][Experiment Parameters]]
    - [[#openstack-instances][OpenStack instances]]
-   - [[#rdbms-deployement-options][RDBMS deployement options]]
+   - [[#rdbms-deployment-options][RDBMS deployment options]]
    - [[#delay][Delay]]
    - [[#locality][Locality]]
      - [[#delay-distribution-uniform--hierarchical][Delay distribution: uniform & hierarchical]]
@@ -82,7 +82,7 @@ consensus algorithms to scale.
    - [[#high-1][High]]
      - [[#mean-of-keystone-operations-2][Mean of Keystone Operations]]
      - [[#cumulative-frequency-distribution-3][Cumulative Frequency Distribution]]
- - [[#edge][Edge]]
+ - [[#locality-impact][Locality Impact]]
    - [[#results][Results]]
      - [[#mean-of-keystone-operations-3][Mean of Keystone Operations]]
      - [[#cumulative-frequency-distribution-4][Cumulative Frequency Distribution]]
@@ -393,8 +393,8 @@ Tack back HotEdge'18 Central vs MultiRegion deployments
   prop).
 
 * Considered Databases
-Description of databases, how they works, how they implements expected
-behaviors of the previous section
+TODO: Description of databases, how they works, how they implements
+expected behaviors of the previous section
 
 #+NAME: lst:rdbms
 #+BEGIN_SRC python :results silent :exports none
@@ -405,31 +405,19 @@ RDBMSS = [ 'mariadb', 'galera', 'cockroachdb' ]
 ** Galera in multi-master replication mode.
 ** CockroachDB (/abbr./ CRDB).
 * Considered OpenStack Services
-OpenStack is a huge project, made of dozens of services. All services
-are developed independently, but built with common principals. In
-particular, a service stores its entire state in a database relying on
-a library called [[https://docs.openstack.org/oslo.db/latest/][~oslo.db~]] that abstracts databases binding. Under the
-hood, ~oslo.db~ wraps SQLAclhemy making OpenStack supports MariaDB and
-PostgreSQL.
-
-From all services, we decided to focus first on [[https://docs.openstack.org/keystone/latest/][Keystone]]. Keystone is
-one of the core services of OpenStack. It manages all the
-authentication part of the OpenStack process. We focus on Keystone
-with the following idea: if we can make Keystone work with
-CockroachDB, then we can hopefully make all services work with
-CockroachDB thanks to ~oslo.db~ abstraction.
-
-We choose Keystone because its database requests are quite simple:
-Keystone splits the authentication management in ten concerns
-(credentials, token, domain, ...), whose code and database requests
-are relatively easy to follow. Keystone presents another advantage
-when you want to test OpenStack at scale. To scale, current OpenStack
-deployments put instances of OpenStack in different regions around the
-globe. Commonly, operators use Galera to synchronise Keystones'
-database because they want to have all of their users and projects
-available across all regions. Hence, a client can authenticate herself
-with the same credential whatever the OpenStack instance. But Galera
-is known for scaling limitation.
+Analyzing the benefit of the geo-partitioning feature of a distributed
+SQL database -- such as CRDB -- in the context of wide area network --
+such as OpenStack for the Edge -- is the incentive of this work.
+Regarding CRDB, [[https://beyondtheclouds.github.io/blog/openstack/cockroachdb/2017/12/22/a-poc-of-openstack-keystone-over-cockroachdb.html][we have developed its support]] inside OpenStack
+[[https://docs.openstack.org/keystone/latest/][Keystone]] few month ago. Hence it seems natural to focus on Keystone
+from the dozens of OpenStack services. Keystone presents another
+advantage when you want to test OpenStack at scale. To scale, current
+OpenStack deployments put instances of OpenStack in different regions
+around the globe. Commonly, operators use Galera to synchronise
+Keystones' database because they want to have all of their users and
+projects available across all regions. Hence, a client can
+authenticate herself with the same credential whatever the OpenStack
+instance. But Galera is known for scaling limitation.
 
 * Experiment Parameters
 This is the list of all parameters considered in this notebook.
@@ -452,7 +440,7 @@ Experiments that test the impact of the cluster size, by making
 varying the number of OpenStack instances, consider LAN link between
 each OpenStack instances.
 
-** RDBMS deployement options
+** RDBMS deployment options
 The deployment of the RDBMS changes if its MariaDB, Galera or CRDB.
 
 The figure [[fig:mariadb]] depicts the deployment for MariaDB. MariaDB is
@@ -521,8 +509,7 @@ instances.
 ** Locality
 An homogeneous delay is sometimes needed but does not map to the edge
 reality where some nodes are closed and other are far. To simulate
-such heterogeneous network infrastructure
-
+such heterogeneous network infrastructure ...
 
 *** Delay distribution: uniform & hierarchical
 This notebook considers two kinds of OpenStack instances deployments.
@@ -1738,7 +1725,7 @@ delay_plot("%s",
 #+RESULTS: lst:xps_delay_high_cdf
 [[file:imgs/delay-impact-high-cdf.svg]]
 
-* Edge
+* Locality Impact
 ** Extract                                                         :noexport:
 #+BEGIN_SRC python -r :results silent :noweb no-export
 @dataclass(frozen=True)
